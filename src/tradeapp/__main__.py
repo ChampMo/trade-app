@@ -324,6 +324,76 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lifecycle(args: argparse.Namespace) -> int:
+    """Where each strategy stands, and what is between it and the next step."""
+    from tradeapp.lifecycle import Evidence, Lifecycle, LifecycleState, PromotionRefused, evaluate
+
+    settings = load_settings()
+    journal = Journal(settings.journal_path)
+    lc = Lifecycle(journal)
+
+    if args.action == "list":
+        known = lc.all_states()
+        from tradeapp.strategies import discover
+
+        for sid in sorted(set(discover()) | set(known)):
+            print(f"{sid:<16} {known.get(sid, LifecycleState.RESEARCH.value)}")
+        if not known:
+            print("\nnothing promoted yet; everything starts in research")
+        return 0
+
+    if args.action == "show":
+        record = lc.record(args.strategy)
+        print(f"{args.strategy}: {record['state']}")
+        for h in record.get("history", []):
+            print(f"  {h['at_utc'][:19]}  {h['from']} → {h['to']}  {h['reason']}")
+        result = evaluate(lc.state(args.strategy), Evidence())
+        if result.to is not result.frm:
+            print(f"\nto reach {result.to.value}, with no evidence supplied yet:")
+            for gate in result.gates:
+                print(f"  {gate}")
+        return 0
+
+    if args.action == "retire":
+        if not args.reason:
+            print("retiring needs --reason; it goes in the journal")
+            return 1
+        print(f"{args.strategy}: {lc.retire(args.strategy, args.reason).value}")
+        return 0
+
+    if args.action == "demote":
+        if not args.reason:
+            print("demoting needs --reason")
+            return 1
+        print(f"{args.strategy}: {lc.demote_to_research(args.strategy, args.reason).value}")
+        return 0
+
+    # promote, using evidence from a fresh backtest of the stored history
+    from tradeapp.backtest import CostModel, monte_carlo, run_backtest
+    from tradeapp.contracts import TF
+    from tradeapp.data import BarStore
+    from tradeapp.lifecycle import evidence_from_backtest
+    from tradeapp.strategies import create
+
+    tf = TF(args.tf.upper())
+    bars = BarStore(args.db).load(args.symbol, tf)
+    if len(bars) <= 101:
+        print(f"only {len(bars)} bars stored; run: python -m tradeapp data sync")
+        return 1
+    costs = CostModel()
+    result = run_backtest(bars, [create(args.strategy)], symbol=args.symbol, timeframe=tf, costs=costs, warmup=100)
+    mc = monte_carlo(result.trades, result.start_balance, runs=500)
+    evidence = evidence_from_backtest(result, monte_carlo=mc)
+    print(f"evidence  {result.stats.summary()}")
+    try:
+        state = lc.promote(args.strategy, evidence)
+        print(f"promoted  {args.strategy} → {state.value}")
+        return 0
+    except PromotionRefused as e:
+        print(str(e))
+        return 1
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Start the trading loop. This one really trades, on whatever account the profile points at."""
     from tradeapp.contracts import TF
@@ -513,6 +583,15 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--show-windows", type=int, default=8)
     bt.add_argument("--db", default="data/history.db")
     bt.set_defaults(fn=cmd_backtest)
+
+    lf = sub.add_parser("lifecycle", help="where each strategy stands on the way to real money")
+    lf.add_argument("action", choices=["list", "show", "promote", "retire", "demote"])
+    lf.add_argument("--strategy", default="ema_cross")
+    lf.add_argument("--reason", default="")
+    lf.add_argument("--symbol", default="EURUSD")
+    lf.add_argument("--tf", default="H4")
+    lf.add_argument("--db", default="data/history.db")
+    lf.set_defaults(fn=cmd_lifecycle)
 
     rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
     rn.add_argument("--symbol", default="EURUSD")
