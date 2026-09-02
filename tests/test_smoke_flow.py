@@ -18,7 +18,8 @@ def test_happy_path_journals_every_step(journal: Journal, fake_broker: FakeBroke
     assert orders[0].sl_verified is True and orders[0].sl and orders[0].sl > 0
     messages = [e.message for e in journal.events_where(source="smoke")]
     assert messages[0] == "smoke start" and messages[-1] == "smoke done"
-    assert "SL verified at broker" in messages
+    # the stop check itself now lives in the execution layer, so it is the same code live trading runs
+    assert "SL verified at broker" in [e.message for e in journal.events_where(source="exec")]
 
 
 def test_dropped_sl_is_set_after_fill(journal: Journal):
@@ -27,7 +28,7 @@ def test_dropped_sl_is_set_after_fill(journal: Journal):
     assert report.ok and report.sl_verified is True
     kinds = [o.kind for o in journal.orders_for(report.client_ref)]
     assert kinds == ["open", "modify", "close"]
-    assert any(e.severity == "WARN" for e in journal.events_where(source="smoke"))
+    assert any(e.severity == "WARN" for e in journal.events_where(source="exec"))
 
 
 def test_unsettable_sl_closes_position_immediately(journal: Journal):
@@ -35,7 +36,7 @@ def test_unsettable_sl_closes_position_immediately(journal: Journal):
     report = run_smoke(b, journal, hold_seconds=0, sleep=NO_SLEEP)
     assert report.ok is False and report.sl_verified is False
     assert b.open_tickets == [] and len(b.closed) == 1  # closed by rule 03, not by the hold/close step
-    crit = [e for e in journal.events_where(severity="CRIT", source="smoke")]
+    crit = [e for e in journal.events_where(severity="CRIT", source="exec")]
     assert any("closing position now" in e.message for e in crit)
 
 

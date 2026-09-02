@@ -23,7 +23,7 @@ TRADING_CALLS = {"market_order", "close_position", "modify_sltp"}
 ALLOWED_BROKER_CALLS = {
     "broker/mt5_bridge.py": TRADING_CALLS,
     "broker/fake.py": TRADING_CALLS,
-    "smoke.py": TRADING_CALLS,
+    "execution.py": TRADING_CALLS,  # the execution layer; everything that trades goes through it
     "risk/killswitch.py": {"close_position"},
 }
 

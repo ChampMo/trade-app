@@ -93,6 +93,16 @@ class Journal:
             s.commit()
             return row.id
 
+    def update_decision(self, decision_id: int, **fields: Any) -> None:
+        """Used to link a decision to the order it produced, once execution knows the order row."""
+        with self._session() as s:
+            row = s.get(Decision, decision_id)
+            if row is None:
+                raise KeyError(decision_id)
+            for k, v in fields.items():
+                setattr(row, k, v)
+            s.commit()
+
     def ai_call(self, **fields: Any) -> int:
         fields.setdefault("ts_utc", utcnow())
         with self._session() as s:

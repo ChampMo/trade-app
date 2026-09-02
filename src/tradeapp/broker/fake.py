@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from tradeapp.broker.guard import enforce_live_guard
+from tradeapp.broker.mt5_bridge import describe_retcode
 from tradeapp.broker.servertime import ServerTimeOffset, utc_to_server
 from tradeapp.contracts import (
     AccountInfo,
@@ -29,6 +30,8 @@ class FakeBehavior:
     reject_orders: bool = False  # every order_send → REJECT
     drop_sl_on_fill: bool = False  # position opens without SL (market-execution brokers do this)
     fail_modify: bool = False  # TRADE_ACTION_SLTP → INVALID_STOPS
+    open_fail_times: int = 0  # first N open attempts fail with open_fail_retcode, then succeed
+    open_fail_retcode: int = 10004  # REQUOTE by default; set 10012 to simulate an ambiguous TIMEOUT
     fail_close_times: int = 0  # first N close attempts fail, then succeed (retry testing)
     fail_close_always: bool = False  # closing never works: the nightmare the kill switch must report
     raise_on_positions: bool = False  # broker cannot even be read
@@ -50,6 +53,7 @@ class FakeBroker:
     connected: bool = False
     _positions: dict[int, Position] = field(default_factory=dict)
     _next_ticket: int = 500_001
+    open_failures: int = 0
     close_failures: int = 0
     sent: list[dict] = field(default_factory=list)
     closed: list[Position] = field(default_factory=list)
@@ -140,6 +144,10 @@ class FakeBroker:
         self.sent.append({"kind": "open", "req": req})
         if self.behavior.reject_orders:
             return OrderResult(ok=False, retcode=10006, retcode_desc="REJECT", price_requested=self.ask)
+        if self.open_failures < self.behavior.open_fail_times:
+            self.open_failures += 1
+            code = self.behavior.open_fail_retcode
+            return OrderResult(ok=False, retcode=code, retcode_desc=describe_retcode(code), price_requested=self.ask)
         is_long = req.side is Side.LONG
         requested = self.ask if is_long else self.bid
         slip = self.behavior.slippage_points * self.point * (1 if is_long else -1)
