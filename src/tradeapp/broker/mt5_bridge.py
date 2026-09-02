@@ -17,8 +17,10 @@ from typing import Any
 from tradeapp.broker.guard import enforce_live_guard
 from tradeapp.broker.servertime import ServerTimeOffset, epoch_to_server_wall, measure_offset, server_to_utc
 from tradeapp.contracts import (
+    TF,
     AccountInfo,
     AccountMode,
+    Bar,
     BrokerError,
     OrderRequest,
     OrderResult,
@@ -274,6 +276,38 @@ class MT5Broker:
             time_server=wall,
             server_utc_offset_min=offset,
         )
+
+    def bars(self, symbol: str, timeframe: TF, count: int = 300, include_forming: bool = False) -> list[Bar]:
+        """Closed bars, oldest first.
+
+        MT5 puts the still-forming bar at position 0. Strategies decide on closed bars only, so it
+        is dropped by default; asking for it is possible but must be deliberate.
+        """
+        self._require_connected()
+        mt5 = self._lib()
+        tf_const = getattr(mt5, f"TIMEFRAME_{timeframe.value}", None)
+        if tf_const is None:
+            raise BrokerError(f"MetaTrader5 has no TIMEFRAME_{timeframe.value}")
+        start = 0 if include_forming else 1
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, start, count)
+        if rates is None or len(rates) == 0:
+            raise BrokerError(f"copy_rates_from_pos({symbol}, {timeframe.value}) failed: {mt5.last_error()}")
+        offset = self.server_offset.minutes
+        out: list[Bar] = []
+        for r in rates:
+            wall = epoch_to_server_wall(float(r["time"]))
+            out.append(
+                Bar(
+                    time_utc=server_to_utc(wall, offset) if offset is not None else wall.replace(tzinfo=UTC),
+                    open=float(r["open"]),
+                    high=float(r["high"]),
+                    low=float(r["low"]),
+                    close=float(r["close"]),
+                    volume=float(r["tick_volume"]),
+                    spread_points=int(r["spread"]) if "spread" in r.dtype.names else 0,
+                )
+            )
+        return out
 
     def _filling(self, symbol: str) -> int:
         mt5 = self._lib()

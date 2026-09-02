@@ -151,6 +151,64 @@ def cmd_risk(args: argparse.Namespace) -> int:
     return 0 if decision.approved else 1
 
 
+def cmd_signals(args: argparse.Namespace) -> int:
+    """Walk the whole chain on live bars: bars -> context -> strategies -> Risk Engine. Sends nothing."""
+    from tradeapp.context import build_context
+    from tradeapp.contracts import TF
+    from tradeapp.risk import RiskContext, RiskEngine, RiskLimits
+    from tradeapp.runtime import StrategyRuntime
+    from tradeapp.strategies import create, discover
+
+    settings = load_settings()
+    tf = TF(args.tf.upper())
+    broker = _mt5_broker(settings)
+    acct = broker.connect()
+    ctx = build_context(broker, args.symbol, tf, count=args.bars)
+    positions = broker.positions()
+    broker.disconnect()
+
+    print(f"account   {acct.login}@{acct.server} equity {acct.equity:.2f} {acct.currency}")
+    print(f"bars      {len(ctx)} x {tf.value} up to {ctx.bar.time_utc:%Y-%m-%d %H:%M} UTC  close {ctx.close()}")
+    ema_f, ema_s = ctx.ema(args.fast), ctx.ema(args.slow)
+    print(
+        f"indicators EMA{args.fast} {ema_f:.5f}  EMA{args.slow} {ema_s:.5f}  "
+        f"ATR14 {ctx.atr(14):.5f}  RSI14 {ctx.rsi(14):.1f}"
+    )
+
+    runtime = StrategyRuntime()
+    known = discover()
+    ids = [args.strategy] if args.strategy else sorted(known)
+    for sid in ids:
+        params = {"fast": args.fast, "slow": args.slow} if sid == "ema_cross" else {}
+        runtime.register(create(sid, **params))
+
+    signals = runtime.on_bar(ctx)
+    print(f"strategies {', '.join(ids)} -> {len(signals)} signal(s) on the last closed bar")
+    if not signals:
+        print("           no cross on this bar; the chain is wired, there is simply nothing to do")
+        return 0
+
+    engine = RiskEngine(RiskLimits(), magic_base=settings.magic_base)
+    risk_ctx = RiskContext(
+        account=acct,
+        symbols={args.symbol: ctx.symbol_info},
+        tick=ctx.tick,
+        positions=positions,
+        now_utc=datetime.now(UTC),
+        day_start_equity=acct.equity,
+        peak_equity=acct.equity,
+    )
+    for sig in signals:
+        i = sig.intent
+        print(f"\nsignal    {sig.key}: {i.side.value} stop {i.stop_price} take {i.take_price} conf {i.confidence}")
+        print(f"          {i.reason}")
+        d = engine.evaluate(i, sig.strategy_id, risk_ctx, variant=sig.variant)
+        print(f"verdict   {d.verdict.value}" + (f" [{d.reason.value}]" if d.reason else ""))
+        print(f"          {d.detail}")
+    print("\nnothing was sent: this command has no path to the broker's trading calls")
+    return 0
+
+
 def cmd_drill(args: argparse.Namespace) -> int:
     """Fire every kill-switch trigger on purpose and report what happened."""
     from tradeapp.drill import run_drills
@@ -199,6 +257,15 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--strategy", default="preview")
     r.add_argument("--short", action="store_true")
     r.set_defaults(fn=cmd_risk)
+
+    g = sub.add_parser("signals", help="run strategies over live bars and show the Risk Engine verdict (sends nothing)")
+    g.add_argument("--symbol", default="EURUSD")
+    g.add_argument("--tf", default="H4", help="M1 M5 M15 M30 H1 H4 D1")
+    g.add_argument("--bars", type=int, default=300)
+    g.add_argument("--strategy", default=None, help="one strategy id; default runs all registered")
+    g.add_argument("--fast", type=int, default=20)
+    g.add_argument("--slow", type=int, default=50)
+    g.set_defaults(fn=cmd_signals)
 
     d = sub.add_parser("drill", help="fire every kill-switch trigger against a simulated broker")
     d.set_defaults(fn=cmd_drill)

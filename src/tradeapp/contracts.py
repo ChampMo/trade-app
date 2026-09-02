@@ -25,6 +25,35 @@ class AccountMode(StrEnum):
     REAL = "real"
 
 
+class TF(StrEnum):
+    """Chart timeframes. Names match MT5's TIMEFRAME_* constants so the bridge maps them by name."""
+
+    M1 = "M1"
+    M5 = "M5"
+    M15 = "M15"
+    M30 = "M30"
+    H1 = "H1"
+    H4 = "H4"
+    D1 = "D1"
+
+    @property
+    def minutes(self) -> int:
+        return {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}[self.value]
+
+
+@dataclass(frozen=True)
+class Bar:
+    """One completed candle. `time_utc` is real UTC (D13), converted by the bridge."""
+
+    time_utc: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+    spread_points: int = 0
+
+
 class BrokerError(RuntimeError):
     """The broker bridge could not do what was asked (connection, API failure)."""
 

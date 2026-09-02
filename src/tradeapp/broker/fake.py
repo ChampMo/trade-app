@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from tradeapp.broker.guard import enforce_live_guard
 from tradeapp.broker.mt5_bridge import describe_retcode
 from tradeapp.broker.servertime import ServerTimeOffset, utc_to_server
 from tradeapp.contracts import (
+    TF,
     AccountInfo,
     AccountMode,
+    Bar,
     BrokerError,
     OrderRequest,
     OrderResult,
@@ -54,6 +56,7 @@ class FakeBroker:
     _positions: dict[int, Position] = field(default_factory=dict)
     _next_ticket: int = 500_001
     open_failures: int = 0
+    _bars: list = field(default_factory=list)
     close_failures: int = 0
     sent: list[dict] = field(default_factory=list)
     closed: list[Position] = field(default_factory=list)
@@ -124,6 +127,33 @@ class FakeBroker:
             time_server=utc_to_server(now, self.server_offset_min),
             server_utc_offset_min=self.server_offset_min,
         )
+
+    def seed_bars(self, bars: list[Bar]) -> None:
+        self._bars = list(bars)
+
+    def bars(self, symbol: str, timeframe: TF, count: int = 300, include_forming: bool = False) -> list[Bar]:
+        self._require()
+        if self._bars:
+            return self._bars[-count:]
+        # Deterministic gentle uptrend, enough history for the usual indicator periods.
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        step = timedelta(minutes=timeframe.minutes)
+        out: list[Bar] = []
+        price = self.bid
+        for i in range(count):
+            price = round(price + (0.0001 if i % 3 else -0.00005), self.digits)
+            out.append(
+                Bar(
+                    time_utc=start + step * i,
+                    open=price,
+                    high=round(price + 0.0004, self.digits),
+                    low=round(price - 0.0004, self.digits),
+                    close=price,
+                    volume=100.0 + i,
+                    spread_points=self.behavior.spread_points,
+                )
+            )
+        return out
 
     def move(self, points: float) -> None:
         """Move the market; open positions re-price."""

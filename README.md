@@ -36,6 +36,12 @@ python -m tradeapp check
 python -m tradeapp risk --stop-points 200
 ```
 
+เดินทั้งสายจากแท่งเทียนจริง ผ่านกลยุทธ์ ไปจนถึงคำตัดสินของ Risk Engine โดยไม่ส่งออเดอร์
+
+```bash
+python -m tradeapp signals --tf H4
+```
+
 ซ้อมกดเบรกฉุกเฉิน ยิงทุก trigger ใส่โบรกจำลอง แล้วบันทึกผลลง journal
 
 ```bash
