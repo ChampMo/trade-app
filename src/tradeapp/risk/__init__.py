@@ -6,12 +6,19 @@ from tradeapp.risk.engine import (
     RiskEngine,
     Verdict,
 )
+from tradeapp.risk.killswitch import KillLimits, KillReport, KillSwitch, KillTrigger, Notifier, SystemHealth
 from tradeapp.risk.limits import AIContext, EngineState, RiskLimits
 
 __all__ = [
     "AIContext",
     "EngineState",
+    "KillLimits",
+    "KillReport",
+    "KillSwitch",
+    "KillTrigger",
     "NewsBlocker",
+    "Notifier",
+    "SystemHealth",
     "RejectReason",
     "RiskContext",
     "RiskDecision",

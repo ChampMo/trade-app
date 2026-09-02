@@ -29,6 +29,9 @@ class FakeBehavior:
     reject_orders: bool = False  # every order_send → REJECT
     drop_sl_on_fill: bool = False  # position opens without SL (market-execution brokers do this)
     fail_modify: bool = False  # TRADE_ACTION_SLTP → INVALID_STOPS
+    fail_close_times: int = 0  # first N close attempts fail, then succeed (retry testing)
+    fail_close_always: bool = False  # closing never works: the nightmare the kill switch must report
+    raise_on_positions: bool = False  # broker cannot even be read
     slippage_points: float = 0.0  # applied against the requester on fills
     spread_points: int = 12
 
@@ -47,6 +50,7 @@ class FakeBroker:
     connected: bool = False
     _positions: dict[int, Position] = field(default_factory=dict)
     _next_ticket: int = 500_001
+    close_failures: int = 0
     sent: list[dict] = field(default_factory=list)
     closed: list[Position] = field(default_factory=list)
 
@@ -181,6 +185,11 @@ class FakeBroker:
     def close_position(self, ticket: int, deviation_points: int = 20) -> OrderResult:
         self._require()
         self.sent.append({"kind": "close", "ticket": ticket})
+        if self.behavior.fail_close_always:
+            return OrderResult(ok=False, retcode=10006, retcode_desc="REJECT", position_ticket=ticket)
+        if self.close_failures < self.behavior.fail_close_times:
+            self.close_failures += 1
+            return OrderResult(ok=False, retcode=10004, retcode_desc="REQUOTE", position_ticket=ticket)
         pos = self._positions.pop(ticket, None)
         if pos is None:
             return OrderResult(ok=False, retcode=10036, retcode_desc="POSITION_CLOSED")
@@ -210,12 +219,45 @@ class FakeBroker:
         """Test inspection helper; works after disconnect (the real broker cannot answer then)."""
         return sorted(self._positions)
 
+    def seed_position(
+        self,
+        symbol: str = "EURUSD",
+        side: Side = Side.LONG,
+        volume: float = 0.01,
+        sl: float | None = None,
+        magic: int = 100_001,
+    ) -> Position:
+        """Put a position on the books without going through order flow.
+
+        Lets drills and tests set up a scenario without calling the trading methods, which keeps
+        the rule 02 exception list short and honest.
+        """
+        ticket = self._next_ticket
+        self._next_ticket += 1
+        entry = self.ask if side is Side.LONG else self.bid
+        default_sl = entry - 0.0020 if side is Side.LONG else entry + 0.0020
+        pos = Position(
+            ticket=ticket,
+            symbol=symbol,
+            side=side,
+            volume=volume,
+            price_open=entry,
+            sl=round(sl if sl is not None else default_sl, self.digits),
+            tp=0.0,
+            profit=0.0,
+            magic=magic,
+        )
+        self._positions[ticket] = pos
+        return pos
+
     def position(self, ticket: int) -> Position | None:
         self._require()
         return self._positions.get(ticket)
 
     def positions(self, symbol: str | None = None, magic: int | None = None) -> list[Position]:
         self._require()
+        if self.behavior.raise_on_positions:
+            raise BrokerError("terminal not responding")
         out = list(self._positions.values())
         if symbol:
             out = [p for p in out if p.symbol == symbol]

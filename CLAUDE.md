@@ -26,7 +26,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 
 - `src/tradeapp/contracts.py` — dataclasses and Protocols (`Intent`, `Strategy`, `Broker`, `OrderRequest`, ...). Change with care; everything depends on them.
 - `src/tradeapp/broker/` — `mt5_bridge.py` (real MT5), `fake.py` (deterministic fake for tests), `guard.py` (live-account guard).
-- `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic; `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
+- `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic; `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection; `killswitch.py` is the emergency brake (rule 06, D12a) and is the one module allowed to close positions directly, never to open them. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
 - `src/tradeapp/journal/` — SQLAlchemy models + `Journal` store (SQLite, all timestamps naive UTC).
 - `src/tradeapp/smoke.py` — Phase 0 proof: open and close one DEMO order with every step journaled.
 - `docs/` — `DECISIONS.md` (locked decisions), `plan-v1.md`, `plan-review.md`, `design/` (UX wireframes + generator).
@@ -49,6 +49,7 @@ pytest -q
 # Phase 0 checks
 python -m tradeapp check          # connect to MT5, print account/terminal/symbol info, no orders
 python -m tradeapp risk           # what the Risk Engine would do with an intent right now (sends nothing)
+python -m tradeapp drill          # fire every kill-switch trigger against a simulated broker
 python -m tradeapp smoke --fake   # full smoke flow against FakeBroker (no MT5 needed)
 python -m tradeapp smoke          # real smoke on the DEMO account: open 0.01 lot, verify SL, close
 python -m tradeapp journal --tail 30

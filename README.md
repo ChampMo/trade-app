@@ -36,6 +36,12 @@ python -m tradeapp check
 python -m tradeapp risk --stop-points 200
 ```
 
+ซ้อมกดเบรกฉุกเฉิน ยิงทุก trigger ใส่โบรกจำลอง แล้วบันทึกผลลง journal
+
+```bash
+python -m tradeapp drill
+```
+
 5. ลอง smoke แบบไม่ต้องมี MT5 ก่อน แล้วค่อยรันจริงบน demo ตอนตลาดเปิด
 
 ```bash

@@ -16,13 +16,16 @@ ORDER_BUILDERS = {
     "risk/engine.py",  # the one door (rule 02)
     "smoke.py",  # Phase 0 proof, DEMO only, documented in CLAUDE.md
 }
-# Where the broker's trading calls may be reached.
-BROKER_CALLERS = {
-    "broker/mt5_bridge.py",
-    "broker/fake.py",
-    "smoke.py",
-}
 TRADING_CALLS = {"market_order", "close_position", "modify_sltp"}
+# Which modules may reach the broker's trading calls, and which calls each is allowed.
+# The kill switch is deliberately narrow: in an emergency it must reach the broker directly rather
+# than through layers that may be the thing that is broken, but it may only ever CLOSE.
+ALLOWED_BROKER_CALLS = {
+    "broker/mt5_bridge.py": TRADING_CALLS,
+    "broker/fake.py": TRADING_CALLS,
+    "smoke.py": TRADING_CALLS,
+    "risk/killswitch.py": {"close_position"},
+}
 
 
 def _modules():
@@ -42,16 +45,24 @@ def test_only_the_risk_engine_builds_orders():
     assert not offenders, "only the Risk Engine may build an OrderRequest (rule 02):\n" + "\n".join(offenders)
 
 
-def test_only_the_bridge_and_smoke_call_the_broker_directly():
+def test_trading_calls_only_happen_where_they_are_allowed():
     offenders = []
     for rel, path in _modules():
-        if rel in BROKER_CALLERS:
-            continue
+        allowed = ALLOWED_BROKER_CALLS.get(rel, set())
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in TRADING_CALLS:
-                offenders.append(f"{rel}:{node.lineno} calls {node.func.attr}")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                call = node.func.attr
+                if call in TRADING_CALLS and call not in allowed:
+                    offenders.append(f"{rel}:{node.lineno} calls {call}")
     assert not offenders, "trading calls belong behind the execution layer (rule 02):\n" + "\n".join(offenders)
+
+
+def test_the_kill_switch_can_close_but_never_open():
+    """An emergency brake that can also open positions is not a brake."""
+    text = (SRC / "risk" / "killswitch.py").read_text(encoding="utf-8")
+    assert "close_position" in text
+    assert "market_order" not in text
 
 
 def test_the_risk_engine_itself_never_touches_a_broker():

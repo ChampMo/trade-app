@@ -151,6 +151,22 @@ def cmd_risk(args: argparse.Namespace) -> int:
     return 0 if decision.approved else 1
 
 
+def cmd_drill(args: argparse.Namespace) -> int:
+    """Fire every kill-switch trigger on purpose and report what happened."""
+    from tradeapp.drill import run_drills
+
+    settings = load_settings()
+    journal = Journal(settings.simulated_journal_path)
+    results = run_drills(journal)
+    width = max(len(r.name) for r in results)
+    for r in results:
+        print(f"  {'PASS' if r.passed else 'FAIL'}  {r.name:<{width}}  {r.got}")
+    passed = sum(1 for r in results if r.passed)
+    print(f"\n{passed}/{len(results)} drills passed")
+    print("simulated broker only: pulling the network cable is P4-01 and gate 5 in DECISIONS D3")
+    return 0 if passed == len(results) else 1
+
+
 def cmd_journal(args: argparse.Namespace) -> int:
     settings = load_settings()
     journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
@@ -183,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--strategy", default="preview")
     r.add_argument("--short", action="store_true")
     r.set_defaults(fn=cmd_risk)
+
+    d = sub.add_parser("drill", help="fire every kill-switch trigger against a simulated broker")
+    d.set_defaults(fn=cmd_drill)
 
     j = sub.add_parser("journal", help="print the last events")
     j.add_argument("--tail", type=int, default=20)
