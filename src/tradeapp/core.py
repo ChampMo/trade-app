@@ -96,6 +96,12 @@ class Core:
 
         self.account: AccountInfo | None = None
         self.positions: list[Position] = []
+        # Equity marks are held in memory and written through to the journal. The journal is still
+        # the durable record (D21); reading it on every tick was costing four SQL round trips a bar,
+        # which is most of a backtest's runtime and buys nothing.
+        self._peak_equity: float = 0.0
+        self._day_start_equity: float = 0.0
+        self._day_key: str | None = None
         self.last_bar_utc: datetime | None = None
         self.last_reconcile_at: datetime | None = None
         self.started = False
@@ -122,6 +128,7 @@ class Core:
         for slot in self.runtime.slots:
             self.engine.magic_for(slot.key)
 
+        self._load_equity_marks()
         self._refresh_equity_marks(self.account.equity)
         self._reconcile(force=True)
         self.kill.state = EngineState.RUNNING
@@ -270,13 +277,19 @@ class Core:
 
     @property
     def peak_equity(self) -> float:
-        return float(self.journal.get_state(PEAK_EQUITY, 0.0) or 0.0)
+        return self._peak_equity
 
     @property
     def day_start_equity(self) -> float:
-        return float(self.journal.get_state(DAY_START_EQUITY, 0.0) or 0.0)
+        return self._day_start_equity
 
-    def _day_key(self, now: datetime) -> str:
+    def _load_equity_marks(self) -> None:
+        """Read what a previous run left behind. Called once, at start."""
+        self._peak_equity = float(self.journal.get_state(PEAK_EQUITY, 0.0) or 0.0)
+        self._day_start_equity = float(self.journal.get_state(DAY_START_EQUITY, 0.0) or 0.0)
+        self._day_key = self.journal.get_state(DAY_KEY)
+
+    def _broker_day(self, now: datetime) -> str:
         """The broker's trading day, not ours (D20): its statements and swaps roll at its midnight."""
         offset = getattr(self.broker, "server_offset", None)
         minutes = offset.minutes if offset is not None and offset.minutes is not None else 0
@@ -286,11 +299,14 @@ class Core:
         """Peak and day-start survive restarts, or the drawdown limit would reset with the process."""
         if equity <= 0:
             return
-        if equity > self.peak_equity:
+        if equity > self._peak_equity:
+            self._peak_equity = equity
             self.journal.set_state(PEAK_EQUITY, equity)
 
-        today = self._day_key(self._now())
-        if self.journal.get_state(DAY_KEY) != today:
+        today = self._broker_day(self._now())
+        if self._day_key != today:
+            self._day_key = today
+            self._day_start_equity = equity
             self.journal.set_state(DAY_KEY, today)
             self.journal.set_state(DAY_START_EQUITY, equity)
             self.journal.event("INFO", SOURCE, f"new trading day {today} (broker time)", {"day_start_equity": equity})

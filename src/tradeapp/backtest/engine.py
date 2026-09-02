@@ -67,6 +67,7 @@ def run_backtest(
     warmup: int = 60,
     history_bars: int = 300,
     stop_on_kill: bool = True,
+    reconcile_every_s: float = 86_400.0,
     journal: Journal | None = None,
 ) -> BacktestResult:
     """Replay `bars` through the live decision path.
@@ -101,7 +102,10 @@ def run_backtest(
             symbol=symbol,
             timeframe=timeframe,
             history_bars=history_bars,
-            reconcile_every_s=0.0,  # every bar; simulated time makes a wall-clock timer meaningless
+            # Simulated time, so this is "once a trading day" rather than once a minute. Reconcile
+            # in a backtest only keeps the ledger tidy — the Risk Engine reads positions from the
+            # broker — and running it on every bar was a third of the runtime.
+            reconcile_every_s=reconcile_every_s,
             tick_interval_s=0.0,
         ),
         limits=limits or RiskLimits(),
