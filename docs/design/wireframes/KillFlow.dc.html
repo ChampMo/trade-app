@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mali:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #efede8; }
+    .app { width: 1440px; height: 960px; display: flex; flex-direction: column; background: #faf9f6; color: #1d1d1b;
+           font-family: 'Mali', 'Segoe UI', Tahoma, sans-serif; font-size: 14px; overflow: hidden; box-sizing: border-box; }
+    .app * { box-sizing: border-box; }
+    a { color: #1d1d1b; } a:hover { color: #555; }
+    .topbar { height: 54px; flex: 0 0 54px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 2px solid #1d1d1b; background: #fff; }
+    .brand { font-weight: 700; font-size: 16px; letter-spacing: .02em; }
+    .sep { width: 2px; height: 26px; background: #1d1d1b; opacity: .2; flex: 0 0 2px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid #1d1d1b; border-radius: 4px; padding: 3px 10px; font-weight: 700; font-size: 13px; background: #fff; white-space: nowrap; }
+    .badge.demo { background: #e3ecff; border-color: #2b5fd9; color: #1a3f9e; }
+    .badge.live { background: #ffe0dd; border-color: #b3261e; color: #8f1d16; }
+    .badge.paper { background: #eeeeea; border-color: #777; color: #555; }
+    .pill { display: inline-flex; align-items: center; border: 1.5px solid #1d1d1b; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; background: #fff; line-height: 1.5; }
+    .pill.ok { background: #dff3e3; border-color: #1b7f3b; color: #155f2c; }
+    .pill.warn { background: #fff1cf; border-color: #8a5d00; color: #6b4800; }
+    .pill.bad { background: #ffe0dd; border-color: #b3261e; color: #8f1d16; }
+    .pill.muted { background: #eeeeea; border-color: #999; color: #666; }
+    .pill.info { background: #e3ecff; border-color: #2b5fd9; color: #1a3f9e; }
+    .stat { display: flex; flex-direction: column; gap: 1px; min-width: 80px; }
+    .stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #666; white-space: nowrap; }
+    .stat .v { font-size: 15px; font-weight: 700; white-space: nowrap; line-height: 1.2; }
+    .pos { color: #1b7f3b; } .neg { color: #b3261e; } .warn-t { color: #8a5d00; } .muted { color: #777; }
+    .kill { margin-left: auto; border: 2px solid #b3261e; color: #b3261e; background: #fff; font-weight: 700; padding: 5px 16px; border-radius: 4px; letter-spacing: .1em; }
+    .body { display: flex; flex: 1; min-height: 0; }
+    .nav { width: 180px; flex: 0 0 180px; border-right: 2px solid #1d1d1b; background: #fff; display: flex; flex-direction: column; padding: 10px 0; }
+    .nav .item { padding: 9px 18px; font-size: 15px; font-weight: 600; }
+    .nav .item.active { background: #1d1d1b; color: #fff; }
+    .nav .foot { margin-top: auto; padding: 12px 18px; font-size: 11px; color: #666; line-height: 1.5; }
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 14px; overflow: hidden; }
+    .pagehead { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+    .pagehead h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.2; }
+    .pagehead .sub { color: #666; font-size: 13px; }
+    .card { border: 1.5px solid #1d1d1b; border-radius: 4px; background: #fff; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; overflow: hidden; }
+    .card h3 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #555; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .card h3 .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 600; color: #666; }
+    .ph { border: 1.5px dashed #8a8a86; background: repeating-linear-gradient(135deg, #f1f0ec 0 8px, #faf9f6 8px 16px); display: flex; align-items: center; justify-content: center; color: #6f6f6b; font-size: 13px; text-align: center; padding: 8px; min-height: 0; flex: 1; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid #1d1d1b; border-radius: 4px; padding: 4px 12px; background: #fff; font-size: 13px; font-weight: 700; white-space: nowrap; line-height: 1.5; }
+    .btn.primary { background: #1d1d1b; color: #fff; }
+    .btn.danger { border-color: #b3261e; color: #b3261e; }
+    .btn.off { opacity: .4; border-style: dashed; }
+    .btn.sm { padding: 1px 8px; font-size: 12px; }
+    .row { display: flex; gap: 12px; align-items: center; min-width: 0; }
+    .col { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+    .grid { display: grid; gap: 12px; min-height: 0; min-width: 0; }
+    table.wf { border-collapse: collapse; width: 100%; font-size: 13px; }
+    table.wf th { text-align: left; border-bottom: 1.5px solid #1d1d1b; padding: 4px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #555; white-space: nowrap; }
+    table.wf td { border-bottom: 1px solid #e2e0da; padding: 4px 7px; white-space: nowrap; vertical-align: middle; }
+    table.wf.wrap td { white-space: normal; line-height: 1.35; }
+    table.wf tr.sel td { background: #f1efe9; }
+    .bar { height: 10px; border: 1.5px solid #1d1d1b; border-radius: 2px; background: #fff; position: relative; flex: 1; min-width: 60px; }
+    .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #1d1d1b; display: block; }
+    .bar i.warn { background: #c98a00; } .bar i.bad { background: #b3261e; } .bar i.ok { background: #1b7f3b; }
+    .note { font-size: 12px; color: #666; line-height: 1.45; }
+    .step { display: flex; align-items: stretch; }
+    .step .s { flex: 1; min-width: 0; border: 1.5px solid #1d1d1b; padding: 5px 6px; text-align: center; font-size: 12px; font-weight: 700; background: #fff; margin-left: -1.5px; line-height: 1.3; }
+    .step .s:first-child { margin-left: 0; }
+    .step .s.cur { background: #1d1d1b; color: #fff; }
+    .step .s.done { background: #e6e6e2; }
+    .step .s.gate { flex: 0 0 auto; border-style: dashed; font-weight: 500; color: #555; background: #faf9f6; padding: 5px 8px; }
+    .toggle { width: 34px; height: 18px; border: 1.5px solid #1d1d1b; border-radius: 999px; position: relative; background: #fff; flex: 0 0 34px; display: inline-block; vertical-align: middle; }
+    .toggle i { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: #1d1d1b; display: block; }
+    .toggle.on { background: #1d1d1b; } .toggle.on i { left: auto; right: 2px; background: #fff; }
+    .field { display: flex; flex-direction: column; gap: 2px; }
+    .field .l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #666; }
+    .field .b { border: 1.5px solid #1d1d1b; border-radius: 4px; padding: 3px 8px; font-size: 13px; background: #fff; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+    .field .b .c { margin-left: auto; }
+    .tabs { display: flex; gap: 0; border-bottom: 1.5px solid #1d1d1b; }
+    .tabs .t { padding: 5px 14px; font-size: 13px; font-weight: 700; border: 1.5px solid #1d1d1b; border-bottom: none; margin-bottom: -1.5px; background: #fff; margin-left: -1.5px; }
+    .tabs .t:first-child { margin-left: 0; }
+    .tabs .t.on { background: #1d1d1b; color: #fff; }
+    .chain { display: flex; flex-direction: column; gap: 0; }
+    .chain .c { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #d5d3cc; font-size: 12.5px; line-height: 1.4; }
+    .chain .n { width: 22px; height: 22px; border: 1.5px solid #1d1d1b; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex: 0 0 22px; }
+    .chain .t { font-weight: 700; }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+    .kv .k { color: #666; }
+    .banner { flex: 0 0 auto; background: #b3261e; color: #fff; padding: 8px 16px; display: flex; align-items: center; gap: 14px; font-weight: 700; font-size: 14px; }
+    .banner .btn { border-color: #fff; color: #b3261e; background: #fff; }
+    .chk { width: 14px; height: 14px; border: 1.5px solid #1d1d1b; border-radius: 3px; display: inline-block; vertical-align: middle; margin-right: 6px; background: #fff; }
+    .chk.on { background: #1d1d1b; }
+    .list { display: flex; flex-direction: column; gap: 0; }
+    .list .li { padding: 6px 8px; border-bottom: 1px solid #e2e0da; display: flex; gap: 10px; align-items: center; font-size: 13px; }
+    .list .li.sel { background: #f1efe9; }
+    .tick { color: #1b7f3b; font-weight: 700; }
+    .x { color: #b3261e; font-weight: 700; }
+</style>
+</helmet>
+<div class="app" style="height: 500px; padding: 16px 20px; gap: 14px;">
+<div class="pagehead"><h1>Kill switch flow</h1><span class="sub">โค้ดล้วน ตัดสินใจในเสี้ยววินาที · คนเป็นคนปลดล็อกเท่านั้น</span></div>
+<div class="step" style="flex: 0 0 auto;"><div class="s">any screen</div><div class="s cur">KILL</div><div class="s">confirm · type KILL</div><div class="s">close all + stop intents</div><div class="s">Telegram CRIT</div><div class="s">KILLED · wait</div><div class="s">Unlock · reason</div><div class="s">PAUSED</div><div class="s">Resume</div><div class="s">RUNNING</div></div>
+<div class="row" style="align-items: flex-start; gap: 24px; flex: 1; min-height: 0;">
+<div class="col" style="gap: 6px;"><span class="note" style="font-weight: 700;">1 · confirm</span><div class="card" style="width: 420px; gap: 10px;">
+<h3>Kill switch</h3>
+<div style="font-size: 15px; font-weight: 700;">Close ALL positions on <span class="badge demo">DEMO · XM #[acct]</span> and stop trading?</div>
+<div class="list"><div class="li">1 open position will be closed at market</div><div class="li">pending intents dropped · strategies stay loaded</div><div class="li">Telegram CRIT sent · unlock requires a reason</div></div>
+<div class="field"><span class="l">Type KILL to confirm</span><div class="b">K I L L</div></div>
+<div class="row" style="justify-content: flex-end; gap: 8px;"><span class="btn ">Cancel</span><span class="btn danger">KILL</span></div></div></div>
+<div class="col" style="gap: 6px;"><span class="note" style="font-weight: 700;">2 · killed state · every screen</span><div class="col" style="width: 520px; gap: 0; border: 1.5px solid #1d1d1b; background: #faf9f6;">
+<div class="topbar" style="height: 44px; flex: 0 0 44px; gap: 10px; padding: 0 10px;"><div class="brand" style="font-size: 14px;">trade-app</div><span class="badge demo" style="font-size: 11px;">DEMO</span><span class="pill bad">KILLED</span><div class="kill" style="padding: 3px 10px; font-size: 12px;">KILL</div></div>
+<div class="banner">KILLED 14:03 UTC · manual (UI) · 1 position closed · trading stopped · Telegram sent <span class="btn sm">Unlock…</span></div>
+<div style="padding: 12px; display: flex; flex-direction: column; gap: 8px; opacity: .45;">
+<div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 8px;"><div class="card"><h3>System</h3>KILLED</div><div class="card"><h3>MT5</h3>connected</div><div class="card"><h3>Positions</h3>0</div></div>
+<div class="ph" style="height: 110px;">dashboard greyed · read-only</div></div>
+<div class="note" style="padding: 8px 12px; border-top: 1px dashed #999;">ปุ่ม KILL ยังกดซ้ำได้เสมอ · Telegram /kill ให้ผลเดียวกัน · ทุกหน้าเห็นแบนเนอร์นี้</div></div></div>
+<div class="col" style="gap: 6px;"><span class="note" style="font-weight: 700;">3 · unlock</span><div class="card" style="width: 420px; gap: 10px;">
+<h3>Unlock trading</h3>
+<div class="field"><span class="l">Reason · required · logged</span><div class="b" style="height: 64px; align-items: flex-start; white-space: normal;">e.g. daily loss hit during NFP spike, SL tagged execution, widened news window</div></div>
+<div class="list"><div class="li"><span class="chk"></span>I reviewed the cause in Journal</div><div class="li"><span class="chk"></span>MT5 positions reconciled = 0 open</div><div class="li"><span class="chk"></span>Risk limits reviewed · unchanged or change logged</div></div>
+<div class="row" style="justify-content: flex-end; gap: 8px;"><span class="btn ">Cancel</span><span class="btn primary">Unlock → PAUSED</span></div>
+<div class="note">หลังปลดล็อกระบบเป็น PAUSED ไม่ใช่ RUNNING ต้องกด Resume อีกครั้งด้วยตัวเอง</div></div></div>
+</div></div>
+</x-dc>
+</body>
+</html>

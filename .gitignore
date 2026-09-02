@@ -1,0 +1,33 @@
+# secrets — never tracked (tests/test_no_secrets.py enforces this)
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# runtime data: journal, history cache, logs
+data/*
+!data/.gitkeep
+logs/
+
+# node / electron (Phase 2)
+node_modules/
+ui/dist/
+
+# design canvas output (derived, 2.6 MB) — sources live in docs/design/wireframes
+docs/design/wireframes/*.html
+!docs/design/wireframes/*.dc.html
+
+# editors / os
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

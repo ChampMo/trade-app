@@ -1,0 +1,167 @@
+{
+  "artboards": [
+    {
+      "file": "Structure.dc.html",
+      "title": "00 Structure",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Main.dc.html",
+      "title": "01 Dashboard",
+      "x": 0,
+      "y": 1110,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Strategies.dc.html",
+      "title": "02 Strategies",
+      "x": 1540,
+      "y": 1110,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Research.dc.html",
+      "title": "03 Research",
+      "x": 3080,
+      "y": 1110,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Journal.dc.html",
+      "title": "04 Journal",
+      "x": 0,
+      "y": 2220,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "AI.dc.html",
+      "title": "05 AI layer",
+      "x": 1540,
+      "y": 2220,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Risk.dc.html",
+      "title": "06 Risk",
+      "x": 3080,
+      "y": 2220,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Reports.dc.html",
+      "title": "07 Reports",
+      "x": 0,
+      "y": 3330,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Events.dc.html",
+      "title": "08 Events",
+      "x": 1540,
+      "y": 3330,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "Settings.dc.html",
+      "title": "09 Settings",
+      "x": 3080,
+      "y": 3330,
+      "w": 1440,
+      "h": 960
+    },
+    {
+      "file": "KillFlow.dc.html",
+      "title": "10 Kill switch flow",
+      "x": 0,
+      "y": 4440,
+      "w": 1440,
+      "h": 500
+    }
+  ],
+  "annotations": [
+    {
+      "id": "n-structure",
+      "x": 1540,
+      "y": 0,
+      "w": 320,
+      "text": "อ่านหน้านี้ก่อน\n\nโปรไฟล์ = core 1 ตัว + MT5 1 ชุด + โหมด 1 แบบ สลับโปรไฟล์แล้วสีทั้งแอปเปลี่ยน\n\nสิ่งที่ล็อกไว้ตั้งแต่ตอนนี้เพื่อไม่ต้องรื้อ: nav 9 หน้า, KILL บน top bar, lifecycle + gate ในแอป, journal เก็บทุกการตัดสินใจ"
+    },
+    {
+      "id": "n-structure-2",
+      "x": 1540,
+      "y": 260,
+      "w": 320,
+      "text": "ภาษาใน UI ใช้อังกฤษเพราะศัพท์เทรดเป็นสากล โน้ตไทยคือคำอธิบายให้เรา ตัวเลขทั้งหมดเป็นตัวอย่าง"
+    },
+    {
+      "id": "n-strat",
+      "x": 1540,
+      "y": 980,
+      "w": 420,
+      "text": "Strategies: variant A/B/C คือกลยุทธ์เดียวกันคนละ magic number รันคู่กันบนฟีดเดียว ทำให้ตอบได้ว่า AI ช่วยจริงไหม ปุ่ม Promote เป็นสีเทาจนกว่าตัวเลขจะครบ"
+    },
+    {
+      "id": "n-research",
+      "x": 3080,
+      "y": 980,
+      "w": 420,
+      "text": "Research: cost model และ walk-forward เป็นส่วนหนึ่งของฟอร์ม ไม่ใช่ตัวเลือกเสริม จะได้ไม่มี backtest ที่ไม่คิดต้นทุนหลุดไปถึง forward"
+    },
+    {
+      "id": "n-journal",
+      "x": 0,
+      "y": 2090,
+      "w": 420,
+      "text": "Journal: แถวหนึ่งคือการตัดสินใจหนึ่งครั้ง รวมที่ถูกปฏิเสธและที่ถูก block ด้านขวาคือ decision chain 6 ขั้น ใช้ทำ post-mortem ทั้งคนและ Claude"
+    },
+    {
+      "id": "n-ai",
+      "x": 1540,
+      "y": 2090,
+      "w": 420,
+      "text": "AI: หน้านี้ตอกย้ำว่า AI แก้ได้แค่ bias / size_mult / block และมีวันหมดอายุ calendar block ไม่ใช้ LLM ทำงานแม้ปิด AI"
+    },
+    {
+      "id": "n-risk",
+      "x": 3080,
+      "y": 2090,
+      "w": 420,
+      "text": "Risk: ค่าทุกช่อง read-only ตอน RUNNING ต้อง Pause ก่อนแก้ และทุกการแก้ต้องใส่เหตุผลลง change log kill trigger เป็นตัวเลขล้วน"
+    },
+    {
+      "id": "n-reports",
+      "x": 0,
+      "y": 3200,
+      "w": 420,
+      "text": "Reports: ผลลัพธ์ปกติของ post-mortem คือรายงาน ไม่ใช่การแก้พารามิเตอร์ ถ้ามีข้อเสนอจะโชว์หลักฐานและลิงก์ PR คุณเป็นคน merge เสมอ"
+    },
+    {
+      "id": "n-settings",
+      "x": 3080,
+      "y": 3200,
+      "w": 420,
+      "text": "Settings: UI ไม่เก็บ secret ใดๆ แสดงแค่สถานะ LIVE ต้องมี ALLOW_LIVE บนเครื่อง core และพิมพ์ยืนยัน งาน Claude ถูกลิสต์ไว้ให้เห็นว่าเป็น build-time"
+    },
+    {
+      "id": "n-kill",
+      "x": 1540,
+      "y": 4440,
+      "w": 420,
+      "text": "Kill flow: ปลดล็อกแล้วไป PAUSED ไม่ใช่ RUNNING ต้องกด Resume เอง Telegram /kill ให้ผลเหมือนปุ่ม"
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}
