@@ -133,6 +133,18 @@ class Journal:
             s.commit()
             return row.id
 
+    def update_ai_call(self, call_id: int | None, **fields: Any) -> None:
+        """Fill in whether the reply parsed, once the caller knows."""
+        if call_id is None:
+            return
+        with self._session() as s:
+            row = s.get(AICall, call_id)
+            if row is None:
+                raise KeyError(call_id)
+            for k, v in fields.items():
+                setattr(row, k, v)
+            s.commit()
+
     # --- reads -------------------------------------------------------------------
 
     def tail_events(self, n: int = 20) -> list[Event]:

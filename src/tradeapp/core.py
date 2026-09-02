@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from tradeapp.broker.servertime import utc_to_server
@@ -79,6 +79,7 @@ class Core:
         limits: RiskLimits | None = None,
         magic_base: int = 100_000,
         news=None,
+        analyst=None,
         notifier=None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], None] = time.sleep,
@@ -94,6 +95,7 @@ class Core:
         self.engine = RiskEngine(self.limits, journal=journal, news=news, magic_base=magic_base)
         self.executor = Executor(broker, journal, now=now, sleep=sleep)
         self.reconciler = Reconciler(broker, journal, now=now)
+        self.analyst = analyst
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)
 
         self.account: AccountInfo | None = None
@@ -222,6 +224,15 @@ class Core:
         self.last_bar_utc = ctx.bar.time_utc
         report.new_bar = True
 
+        # A new closed bar is exactly when a fresh view is worth paying for, and the only moment
+        # it can change anything. Refreshing on a wall clock would spend the budget on bars that
+        # nobody is going to trade.
+        if self.analyst is not None:
+            outcome = self.analyst.refresh(ctx)
+            if not outcome.used_model:
+                report.note(f"ai: {outcome.detail}")
+            ctx = replace(ctx, ai=self.analyst.view)
+
         # 5. strategies -> risk engine -> broker
         signals = self.runtime.on_bar(ctx)
         report.signals = len(signals)
@@ -334,7 +345,7 @@ class Core:
                 now_utc=now,
                 tick=self.broker.tick(self.config.symbol),
                 symbol_info=self.broker.symbol_info(self.config.symbol),
-                ai=AIContext.neutral(),  # Phase 3 fills this in
+                ai=self.analyst.view if self.analyst is not None else AIContext.neutral(),
             )
         except Exception as e:  # noqa: BLE001
             self.journal.event("WARN", SOURCE, "could not build a context this tick", {"error": str(e)})

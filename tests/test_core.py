@@ -328,3 +328,73 @@ def test_status_is_a_readable_snapshot(journal: Journal):
     assert status["state"] == "RUNNING" and status["open_positions"] == 1
     assert status["peak_equity"] > 0 and status["frozen"] is False
     assert status["strategies"][0]["key"] == "always_long"
+
+
+# --- the AI layer, wired in (P3-03) ---------------------------------------------------------
+
+
+class StubAnalyst:
+    """Stands in for the real Analyst so the loop can be tested without a network."""
+
+    def __init__(self, view, used_model=True):
+        self._view = view
+        self.refreshes = 0
+        self.used_model = used_model
+
+    @property
+    def view(self):
+        return self._view
+
+    def refresh(self, ctx):
+        from tradeapp.ai.analyst import AnalystResult
+
+        self.refreshes += 1
+        return AnalystResult(self._view, self.used_model, "stub")
+
+
+def test_the_ai_view_reaches_the_risk_engine(journal: Journal):
+    from tradeapp.risk import AIContext
+
+    core = build(journal)
+    core.analyst = StubAnalyst(AIContext.valid_for(60, NOW, size_mult=0.5, source="stub"))
+    core.start()
+    report = core.tick()
+
+    assert report.sent == 1
+    assert core.broker.positions()[0].volume == 0.05  # half of the usual 0.11
+
+
+def test_an_ai_block_stops_the_trade_and_is_journaled(journal: Journal):
+    from tradeapp.risk import AIContext
+
+    core = build(journal)
+    core.analyst = StubAnalyst(AIContext.valid_for(60, NOW, block=True, source="stub"))
+    core.start()
+    report = core.tick()
+
+    assert report.signals == 1 and report.rejected == 1 and report.sent == 0
+    assert "ai_block" in report.notes[0]
+
+
+def test_the_analyst_is_asked_once_per_closed_bar(journal: Journal):
+    """Refreshing on a wall clock would spend the budget on bars nobody is going to trade."""
+    from tradeapp.risk import AIContext
+
+    core = build(journal)
+    stub = StubAnalyst(AIContext.neutral())
+    core.analyst = stub
+    core.start()
+    core.tick()
+    core.tick()  # same bar
+    assert stub.refreshes == 1
+
+
+def test_a_quiet_analyst_is_noted_but_does_not_stop_trading(journal: Journal):
+    from tradeapp.risk import AIContext
+
+    core = build(journal)
+    core.analyst = StubAnalyst(AIContext.neutral(), used_model=False)
+    core.start()
+    report = core.tick()
+    assert report.sent == 1
+    assert any("ai: stub" in note for note in report.notes)

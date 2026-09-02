@@ -324,6 +324,23 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _analyst(settings, journal, quiet: bool = True):
+    """The run-time AI layer. Absent or out of budget is a normal state, not a failure."""
+    from tradeapp.ai.analyst import Analyst
+    from tradeapp.ai.client import DeepSeekClient
+    from tradeapp.calendar import CalendarStore
+
+    key = settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None
+    if not key:
+        if not quiet:
+            print("ai        no DEEPSEEK_API_KEY; running on rules alone")
+        return None
+    client = DeepSeekClient(key, journal, daily_budget_usd=settings.deepseek_daily_budget_usd)
+    if not quiet:
+        print(f"ai        on, ${client.spent_today:.4f} of ${settings.deepseek_daily_budget_usd:.2f} spent today")
+    return Analyst(client, journal, calendar=CalendarStore("data/calendar.db"))
+
+
 def _news_blocker(db: str, quiet: bool = True):
     """A calendar with no events blocks nothing, so an empty store is not an error — but say so."""
     from tradeapp.calendar import CalendarStore, NewsWindows
@@ -406,6 +423,7 @@ def _build_core(settings, args, journal):
         runtime.register(create(sid))
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
+    analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
 
     core = Core(
         broker,
@@ -419,6 +437,7 @@ def _build_core(settings, args, journal):
         ),
         limits=RiskLimits(),
         news=news,
+        analyst=analyst,
         magic_base=settings.magic_base,
     )
     return core, ids, tf
@@ -555,6 +574,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         runtime.register(create(sid))
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
+    analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
 
     core = Core(
         broker,
@@ -565,6 +585,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         ),
         limits=RiskLimits(),
         news=news,
+        analyst=analyst,
         magic_base=settings.magic_base,
     )
 
@@ -749,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=None, help="defaults to the profile's port")
     sv.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
+    sv.add_argument("--ai", action="store_true", help="let the DeepSeek analyst set bias/size/block")
     sv.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     sv.add_argument("--fake", action="store_true", help="simulated broker, no MT5 at all")
     sv.set_defaults(fn=cmd_serve)
@@ -760,6 +782,7 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--interval", type=float, default=5.0, help="seconds between ticks")
     rn.add_argument("--reconcile-every", type=float, default=60.0)
     rn.add_argument("--max-ticks", type=int, default=None)
+    rn.add_argument("--ai", action="store_true", help="let the DeepSeek analyst set bias/size/block")
     rn.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     rn.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
     rn.add_argument("--fake", action="store_true", help="drive a simulated broker instead of MT5")
