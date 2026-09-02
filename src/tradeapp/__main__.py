@@ -324,6 +324,82 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_core(settings, args, journal):
+    """Assemble broker + strategies + core the same way for `run` and `serve`."""
+    from tradeapp.contracts import TF
+    from tradeapp.core import Core, CoreConfig
+    from tradeapp.risk import RiskLimits
+    from tradeapp.runtime import StrategyRuntime
+    from tradeapp.strategies import create, discover
+
+    tf = TF(args.tf.upper())
+    if args.fake:
+        from tradeapp.broker.fake import FakeBroker
+
+        broker = FakeBroker()
+    else:
+        broker = _mt5_broker(settings)
+    if getattr(args, "paper", False):
+        from tradeapp.broker.paper import PaperBroker
+
+        broker = PaperBroker(broker, balance=args.balance)
+
+    runtime = StrategyRuntime(journal)
+    ids = [args.strategy] if args.strategy else sorted(discover())
+    for sid in ids:
+        runtime.register(create(sid))
+
+    core = Core(
+        broker,
+        journal,
+        runtime=runtime,
+        config=CoreConfig(
+            symbol=args.symbol,
+            timeframe=tf,
+            tick_interval_s=args.interval,
+            reconcile_every_s=args.reconcile_every,
+        ),
+        limits=RiskLimits(),
+        magic_base=settings.magic_base,
+    )
+    return core, ids, tf
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the trading loop in the background and expose the local API the UI talks to."""
+    from tradeapp.api import serve
+    from tradeapp.service import CoreService
+
+    settings = load_settings()
+    journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
+    core, ids, tf = _build_core(settings, args, journal)
+    service = CoreService(core)
+
+    mode = "simulated broker" if args.fake else ("paper fills" if args.paper else "REAL orders")
+    port = args.port or settings.port
+    print(f"config    profile={settings.profile.value} journal={journal.path} live_enabled={settings.live_enabled}")
+    print(f"mode      {mode}")
+    print(f"strategies {', '.join(ids)} on {args.symbol} {tf.value}")
+    try:
+        acct = service.core.broker.connect()
+        service.core.broker.disconnect()
+        print(f"account   {acct.login}@{acct.server} {acct.mode.value} equity {acct.equity:.2f}")
+    except LiveAccountBlocked as e:
+        print(f"BLOCKED: {e}")
+        return 2
+
+    service.start()
+    print(f"api       http://127.0.0.1:{port}  (docs at /docs)")
+    print("          Ctrl+C to stop\n")
+    try:
+        serve(service, host=args.host, port=port)
+    except KeyboardInterrupt:
+        print("\nstopping on Ctrl+C")
+    finally:
+        service.stop("command line")
+    return 0
+
+
 def cmd_lifecycle(args: argparse.Namespace) -> int:
     """Where each strategy stands, and what is between it and the next step."""
     from tradeapp.lifecycle import Evidence, Lifecycle, LifecycleState, PromotionRefused, evaluate
@@ -593,6 +669,19 @@ def main(argv: list[str] | None = None) -> int:
     lf.add_argument("--db", default="data/history.db")
     lf.set_defaults(fn=cmd_lifecycle)
 
+    sv = sub.add_parser("serve", help="run the trading loop plus the local API the UI talks to")
+    sv.add_argument("--symbol", default="EURUSD")
+    sv.add_argument("--tf", default="H4")
+    sv.add_argument("--strategy", default=None)
+    sv.add_argument("--interval", type=float, default=5.0)
+    sv.add_argument("--reconcile-every", type=float, default=60.0)
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=None, help="defaults to the profile's port")
+    sv.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
+    sv.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
+    sv.add_argument("--fake", action="store_true", help="simulated broker, no MT5 at all")
+    sv.set_defaults(fn=cmd_serve)
+
     rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
     rn.add_argument("--symbol", default="EURUSD")
     rn.add_argument("--tf", default="H4")
@@ -600,6 +689,8 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--interval", type=float, default=5.0, help="seconds between ticks")
     rn.add_argument("--reconcile-every", type=float, default=60.0)
     rn.add_argument("--max-ticks", type=int, default=None)
+    rn.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
+    rn.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
     rn.add_argument("--fake", action="store_true", help="drive a simulated broker instead of MT5")
     rn.set_defaults(fn=cmd_run)
 

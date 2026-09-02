@@ -2,7 +2,7 @@
 
 Desktop app ควบคุมบอทเทรด MT5 (โบรก XM) · core เป็น Python แยกโปรเซสจาก UI · AI ตอนรันคือ DeepSeek ที่แก้ได้แค่ 3 ค่า · Claude Code ใช้เฉพาะตอนพัฒนา
 
-สถานะ: **Phase 1 เกือบครบ** · core loop, Risk Engine, kill switch, execution, reconcile, strategy runtime ทำงานแล้ว · เหลือ FastAPI, paper broker และการรันเป็น background process
+สถานะ: **Phase 1 และ 2 ครบแล้วยกเว้น UI** · core loop, Risk Engine, kill switch, execution, reconcile, backtest engine, walk-forward, lifecycle gates, API ทำงานแล้ว · เหลือ UI (Electron) และ Phase 3 ชั้น AI
 
 เอกสารหลัก
 
@@ -10,6 +10,7 @@ Desktop app ควบคุมบอทเทรด MT5 (โบรก XM) · cor
 - [BACKLOG.md](BACKLOG.md) คิวงานเรียงลำดับ พร้อมเกณฑ์ "เสร็จเมื่อ"
 - [docs/DECISIONS.md](docs/DECISIONS.md) การตัดสินใจที่ล็อกแล้ว
 - [docs/plan-v1.md](docs/plan-v1.md) แผนฉบับแรก · [docs/plan-review.md](docs/plan-review.md) ความเห็นและจุดที่แก้
+- [docs/RUNNING.md](docs/RUNNING.md) โหมดการรัน · API · การตั้งให้บอทเดินเองตอน logon
 - [docs/RESEARCH.md](docs/RESEARCH.md) สมุดบันทึกผลทดสอบกลยุทธ์ ทั้งที่ผ่านและไม่ผ่าน
 - [docs/design/](docs/design/README.md) wireframe โครงสร้าง UX/UI
 
@@ -71,6 +72,12 @@ python -m tradeapp run --fake --max-ticks 5
 
 ```bash
 python -m tradeapp run
+```
+
+รันลูปพร้อม API ให้ UI ต่อ · `--paper` คือราคาจริงแต่ไม่ส่งออเดอร์
+
+```bash
+python -m tradeapp serve --paper
 ```
 
 ดึงประวัติราคาจาก MT5 แล้วรัน backtest ผ่านเส้นทางตัดสินใจเดียวกับตอนเทรดจริง

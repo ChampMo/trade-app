@@ -30,6 +30,8 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/backtest/` — the live system fed from a file. `broker.py` is a `Broker` made of history so the backtest drives the real Core/Risk/Executor; `costs.py` holds the measured XM numbers (D18); `stats.py` and `robustness.py` produce what the gates read. Never add a second decision path here — that is the whole point of the package.
 - `src/tradeapp/lifecycle.py` — D3's gates as code that refuses. No force parameter; a parameter change demotes to research.
 - `src/tradeapp/data.py` — SQLite bar store. Upsert by time, weekend-aware gap report.
+- `src/tradeapp/api.py` + `service.py` — the local API (D7) and the thread that runs the loop behind it. Localhost only, no auth, and `serve` refuses a non-loopback host because `/control/kill` is one POST away.
+- `src/tradeapp/broker/paper.py` — live prices, imaginary fills. Nothing leaves the machine.
 - `src/tradeapp/core.py` — **the loop**, and the one place everything is wired together. Order is safety first: read the account, reconcile on a timer, let the kill switch fire, and only then look for a new closed bar. A tick that finds trouble never reaches the trading step. Peak and day-start equity live in the journal's `state` table so a restart cannot erase the drawdown history (D21).
 - `src/tradeapp/strategies/` — plugins. One file per strategy, registered with `@register`; a new strategy touches nothing else. `src/tradeapp/runtime.py` runs them and disables any that raises or returns nonsense, without stopping the others.
 - `src/tradeapp/context.py` + `indicators.py` — the only view a strategy has of the world (rule 04). Indicators match MT5's definitions (SMA-seeded EMA, Wilder ATR/RSI) and return `None` during warm-up.
@@ -62,6 +64,8 @@ python -m tradeapp reconcile      # compare broker positions against the journal
 python -m tradeapp drill          # fire every kill-switch trigger against a simulated broker
 python -m tradeapp run --fake     # the trading loop against a simulated broker
 python -m tradeapp run            # the trading loop for real, on the profile's account
+python -m tradeapp serve --paper  # loop + API, live prices, nothing sent
+python -m tradeapp serve          # loop + API, real orders
 python -m tradeapp smoke --fake   # full smoke flow against FakeBroker (no MT5 needed)
 python -m tradeapp smoke          # real smoke on the DEMO account: open 0.01 lot, verify SL, close
 python -m tradeapp data sync      # pull history from MT5 into data/history.db

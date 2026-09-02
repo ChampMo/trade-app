@@ -180,6 +180,21 @@ class Journal:
             ).scalars()
             return set(opened) - set(closed)
 
+    def events_since(self, after_id: int = 0, limit: int = 200) -> list[Event]:
+        """Events newer than an id, oldest first. The websocket walks forward with this."""
+        with self._session() as s:
+            return list(s.execute(select(Event).where(Event.id > after_id).order_by(Event.id).limit(limit)).scalars())
+
+    def recent_decisions(self, limit: int = 100) -> list[Decision]:
+        with self._session() as s:
+            rows = s.execute(select(Decision).order_by(Decision.id.desc()).limit(limit)).scalars().all()
+            return list(reversed(rows))
+
+    def orders_recent(self, limit: int = 100) -> list[Order]:
+        with self._session() as s:
+            rows = s.execute(select(Order).order_by(Order.id.desc()).limit(limit)).scalars().all()
+            return list(reversed(rows))
+
     def events_where(self, severity: str | None = None, source: str | None = None) -> list[Event]:
         with self._session() as s:
             q = select(Event).order_by(Event.id)

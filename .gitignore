@@ -16,7 +16,8 @@ dist/
 # runtime data: journal, history cache, logs
 data/*
 !data/.gitkeep
-logs/
+logs/*
+!logs/.gitkeep
 
 # node / electron (Phase 2)
 node_modules/

@@ -12,12 +12,15 @@ dependencies = [
   "pydantic>=2.7",
   "pydantic-settings>=2.3",
   "sqlalchemy>=2.0",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 # The official MetaTrader5 package only exists for Windows. Tests never need it (they use FakeBroker).
 mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
-dev = ["pytest>=8", "ruff>=0.5"]
+dev = ["pytest>=8", "ruff>=0.5", "respx>=0.21"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -34,3 +37,7 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]  # `ruff format` wraps code; long literal strings are allowed
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI declares request bodies as parameter defaults; that is the framework's idiom, not a bug.
+"src/tradeapp/api.py" = ["B008"]
