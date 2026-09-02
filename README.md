@@ -2,7 +2,7 @@
 
 Desktop app ควบคุมบอทเทรด MT5 (โบรก XM) · core เป็น Python แยกโปรเซสจาก UI · AI ตอนรันคือ DeepSeek ที่แก้ได้แค่ 3 ค่า · Claude Code ใช้เฉพาะตอนพัฒนา
 
-สถานะ: **Phase 1 และ 2 ครบแล้วยกเว้น UI** · core loop, Risk Engine, kill switch, execution, reconcile, backtest engine, walk-forward, lifecycle gates, API ทำงานแล้ว · เหลือ UI (Electron) และ Phase 3 ชั้น AI
+สถานะ: **Phase 0-2 ครบ · Phase 3 ทำไปครึ่ง** · core loop, Risk Engine, kill switch, execution, reconcile, backtest, walk-forward, lifecycle gates, API, UI (Electron) และปฏิทินข่าว + DeepSeek analyst ทำงานแล้ว · เหลือ agent Scout/Reviewer, A/B, watchdog, Telegram, post-mortem
 
 เอกสารหลัก
 
@@ -100,6 +100,16 @@ python -m tradeapp calendar import --file week.json
 python -m tradeapp calendar show --hours 72
 ```
 
+เปิดหน้าจอ ต้องมี core รันอยู่ก่อน
+
+```bash
+cd ui && npm install
+```
+
+```bash
+npm start
+```
+
 เทสและ lint
 
 ```bash
@@ -124,6 +134,10 @@ src/tradeapp/
   backtest/           ย้อนอดีตด้วยเส้นทางตัดสินใจเดียวกับของจริง · cost model · walk-forward · Monte Carlo
   data.py             คลังแท่งเทียน SQLite · sync เพิ่มได้ · รายงาน gap โดยไม่นับวันหยุดสุดสัปดาห์
   smoke.py            เปิดปิดออเดอร์ 1 ไม้ พร้อม log ทุกขั้น
+  api.py service.py   API บน localhost ที่ UI คุยด้วย · ลูปรันในเธรดเบื้องหลัง
+  ai/                 DeepSeek client · schema ที่บังคับขอบเขต · Analyst
+  calendar.py         ปฏิทินข่าว ไม่มี LLM
+ui/                   Vite + React + Tailwind ห่อด้วย Electron · คุยกับ core ผ่าน API เท่านั้น
 tests/                รวม test_no_claude_dependency และ test_no_secrets
 docs/                 แผน การตัดสินใจ wireframe
 ```

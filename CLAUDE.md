@@ -41,6 +41,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/execution.py` — the only code that opens a position. Retries only the retcodes that mean the order never reached the book (never a TIMEOUT: it is ambiguous and a retry can double-open), records signed slippage, enforces rule 03 after the fill, and produces the counters the kill switch reads.
 - `src/tradeapp/journal/` — SQLAlchemy models + `Journal` store (SQLite, all timestamps naive UTC).
 - `src/tradeapp/smoke.py` — Phase 0 proof: open and close one DEMO order with every step journaled.
+- `ui/` — Vite + React + Tailwind, wrapped by Electron. It talks to the core **only** over the local API: no MT5 client, no credentials, no way to place an order. Closing the window never stops trading.
 - `docs/` — `DECISIONS.md` (locked decisions), `RESEARCH.md` (every backtest run and what it said, including the failures), `plan-v1.md`, `plan-review.md`, `design/`.
 - `BACKLOG.md` — the ordered work queue. Take the top unblocked item.
 
@@ -57,6 +58,11 @@ copy .env.example .env                               # then fill MT5_* for the X
 # every change
 ruff check src tests
 pytest -q
+
+# the UI (needs a core running: python -m tradeapp serve --fake)
+cd ui && npm install       # once
+npm run dev                # browser at the port it prints
+npm start                  # Vite + Electron together
 
 # Phase 0 checks
 python -m tradeapp check          # connect to MT5, print account/terminal/symbol info, no orders

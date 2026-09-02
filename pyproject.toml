@@ -13,7 +13,10 @@ dependencies = [
   "pydantic-settings>=2.3",
   "sqlalchemy>=2.0",
   "fastapi>=0.110",
-  "uvicorn>=0.29",
+  # The websocket event stream needs a protocol implementation, which plain uvicorn does not ship.
+  # Starlette's TestClient does its own, so the tests passed while the real server refused every
+  # upgrade — caught only by opening the UI against a running core.
+  "uvicorn[standard]>=0.29",
   "httpx>=0.27",
 ]
 

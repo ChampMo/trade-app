@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-sans text-sm;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border-[1.5px] border-ink rounded p-3 flex flex-col gap-2 min-h-0 min-w-0;
+  }
+  .card-title {
+    @apply text-[10px] uppercase tracking-wider text-muted font-bold flex items-center gap-2;
+  }
+  .pill {
+    @apply inline-flex items-center border-[1.5px] rounded-full px-2 text-xs font-bold leading-5 whitespace-nowrap;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center border-[1.5px] border-ink rounded px-3 py-1 text-xs font-bold bg-surface disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .stat-k {
+    @apply text-[10px] uppercase tracking-wider text-muted whitespace-nowrap;
+  }
+  .stat-v {
+    @apply text-[15px] font-bold leading-tight whitespace-nowrap font-mono;
+  }
+  .th {
+    @apply text-left text-[10px] uppercase tracking-wider text-muted font-bold border-b-[1.5px] border-ink px-2 py-1 whitespace-nowrap;
+  }
+  .td {
+    @apply border-b border-line px-2 py-1 whitespace-nowrap align-middle;
+  }
+}

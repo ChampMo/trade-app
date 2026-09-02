@@ -19,9 +19,10 @@ data/*
 logs/*
 !logs/.gitkeep
 
-# node / electron (Phase 2)
+# node / electron
 node_modules/
 ui/dist/
+ui/release/
 
 # design canvas output (derived, 2.6 MB) — sources live in docs/design/wireframes
 docs/design/wireframes/*.html
