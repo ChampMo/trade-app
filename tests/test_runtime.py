@@ -314,3 +314,70 @@ def test_ema_cross_stop_sits_below_the_close_for_a_long():
 def test_ema_cross_refuses_a_nonsense_configuration():
     with pytest.raises(ValueError, match="fast period"):
         EmaCross(fast=50, slow=20)
+
+
+# --- the mean-reversion strategy (P2-04) ------------------------------------------------
+
+
+def test_meanrev_is_quiet_without_enough_history():
+    from tradeapp.strategies.meanrev_m15 import MeanReversionM15
+
+    assert MeanReversionM15().on_bar(ctx_for([1.10] * 20, tf=TF.M15)) is None
+
+
+def test_meanrev_fades_a_stretch_below_the_average():
+    """Drift down for a long time, drop hard, then print a bar that turns back up."""
+    from tradeapp.strategies.meanrev_m15 import MeanReversionM15
+
+    prices = [1.2000 - i * 0.0001 for i in range(80)] + [1.1900 - i * 0.0020 for i in range(12)]
+    bars = make_bars(prices)
+    turn = bars[-1]
+    bars[-1] = Bar(
+        time_utc=turn.time_utc,
+        open=turn.close - 0.0030,
+        high=turn.close + 0.0005,
+        low=turn.close - 0.0035,
+        close=turn.close,
+    )
+    ctx = Context(symbol="EURUSD", timeframe=TF.M15, bars=bars, now_utc=bars[-1].time_utc)
+
+    intent = MeanReversionM15(ma=50, band_atr_mult=1.0, rsi_low=45).on_bar(ctx)
+    assert intent is not None and intent.side is Side.LONG
+    assert intent.stop_price < ctx.close() < intent.take_price
+    assert "fading back to the average" in intent.reason
+
+
+def test_meanrev_will_not_catch_a_falling_knife():
+    """Stretched but still falling is not a reversion signal."""
+    from tradeapp.strategies.meanrev_m15 import MeanReversionM15
+
+    prices = [1.2000 - i * 0.0001 for i in range(80)] + [1.1900 - i * 0.0020 for i in range(12)]
+    bars = make_bars(prices)
+    last = bars[-1]
+    bars[-1] = Bar(
+        time_utc=last.time_utc,
+        open=last.close + 0.0030,
+        high=last.close + 0.0035,
+        low=last.close - 0.0005,
+        close=last.close,
+    )
+    ctx = Context(symbol="EURUSD", timeframe=TF.M15, bars=bars, now_utc=bars[-1].time_utc)
+    assert MeanReversionM15(ma=50, band_atr_mult=1.0, rsi_low=45).on_bar(ctx) is None
+
+
+def test_meanrev_is_quiet_in_a_calm_market():
+    from tradeapp.strategies.meanrev_m15 import MeanReversionM15
+
+    assert MeanReversionM15().on_bar(ctx_for([1.10] * 120, tf=TF.M15)) is None
+
+
+def test_meanrev_refuses_a_nonsense_configuration():
+    from tradeapp.strategies.meanrev_m15 import MeanReversionM15
+
+    with pytest.raises(ValueError, match="must be positive"):
+        MeanReversionM15(band_atr_mult=0)
+
+
+def test_both_strategies_are_discoverable():
+    found = discover()
+    assert {"ema_cross", "meanrev_m15"} <= set(found)

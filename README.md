@@ -10,6 +10,7 @@ Desktop app ควบคุมบอทเทรด MT5 (โบรก XM) · cor
 - [BACKLOG.md](BACKLOG.md) คิวงานเรียงลำดับ พร้อมเกณฑ์ "เสร็จเมื่อ"
 - [docs/DECISIONS.md](docs/DECISIONS.md) การตัดสินใจที่ล็อกแล้ว
 - [docs/plan-v1.md](docs/plan-v1.md) แผนฉบับแรก · [docs/plan-review.md](docs/plan-review.md) ความเห็นและจุดที่แก้
+- [docs/RESEARCH.md](docs/RESEARCH.md) สมุดบันทึกผลทดสอบกลยุทธ์ ทั้งที่ผ่านและไม่ผ่าน
 - [docs/design/](docs/design/README.md) wireframe โครงสร้าง UX/UI
 
 ## เริ่มใช้งาน (Phase 0)
