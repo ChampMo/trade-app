@@ -27,6 +27,8 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/contracts.py` — dataclasses and Protocols (`Intent`, `Strategy`, `Broker`, `OrderRequest`, ...). Change with care; everything depends on them.
 - `src/tradeapp/broker/` — `mt5_bridge.py` (real MT5), `fake.py` (deterministic fake for tests), `guard.py` (live-account guard).
 - `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic; `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection; `killswitch.py` is the emergency brake (rule 06, D12a) and is the one module allowed to close positions directly, never to open them. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
+- `src/tradeapp/backtest/` — the live system fed from a file. `broker.py` is a `Broker` made of history so the backtest drives the real Core/Risk/Executor; `costs.py` holds the measured XM numbers (D18); `stats.py` and `robustness.py` produce what the gates read. Never add a second decision path here — that is the whole point of the package.
+- `src/tradeapp/data.py` — SQLite bar store. Upsert by time, weekend-aware gap report.
 - `src/tradeapp/core.py` — **the loop**, and the one place everything is wired together. Order is safety first: read the account, reconcile on a timer, let the kill switch fire, and only then look for a new closed bar. A tick that finds trouble never reaches the trading step. Peak and day-start equity live in the journal's `state` table so a restart cannot erase the drawdown history (D21).
 - `src/tradeapp/strategies/` — plugins. One file per strategy, registered with `@register`; a new strategy touches nothing else. `src/tradeapp/runtime.py` runs them and disables any that raises or returns nonsense, without stopping the others.
 - `src/tradeapp/context.py` + `indicators.py` — the only view a strategy has of the world (rule 04). Indicators match MT5's definitions (SMA-seeded EMA, Wilder ATR/RSI) and return `None` during warm-up.
@@ -61,6 +63,10 @@ python -m tradeapp run --fake     # the trading loop against a simulated broker
 python -m tradeapp run            # the trading loop for real, on the profile's account
 python -m tradeapp smoke --fake   # full smoke flow against FakeBroker (no MT5 needed)
 python -m tradeapp smoke          # real smoke on the DEMO account: open 0.01 lot, verify SL, close
+python -m tradeapp data sync      # pull history from MT5 into data/history.db
+python -m tradeapp data info      # what is stored, and where the gaps are
+python -m tradeapp backtest       # replay stored history through the live decision path
+python -m tradeapp backtest --walk-forward
 python -m tradeapp journal --tail 30
 ```
 

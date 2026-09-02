@@ -210,6 +210,120 @@ def cmd_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_data(args: argparse.Namespace) -> int:
+    """Pull history from MT5 into the local store, or report what is already there."""
+    from tradeapp.contracts import TF
+    from tradeapp.data import BarStore
+
+    settings = load_settings()
+    store = BarStore(args.db)
+
+    if args.action == "info":
+        rows = store.symbols()
+        if not rows:
+            print("store is empty; run: python -m tradeapp data sync")
+            return 0
+        for symbol, tf_name, count in rows:
+            tf = TF(tf_name)
+            first, last = store.range(symbol, tf)
+            gaps = store.gaps(symbol, tf)
+            print(f"{symbol:<10} {tf_name:<4} {count:>7} bars  {first:%Y-%m-%d} → {last:%Y-%m-%d}  {len(gaps)} gap(s)")
+            for gap in gaps[: args.show_gaps]:
+                print(f"           gap {gap}")
+        return 0
+
+    tf = TF(args.tf.upper())
+    broker = _mt5_broker(settings)
+    broker.connect()
+    report = store.sync_from_broker(broker, args.symbol, tf, count=args.count)
+    broker.disconnect()
+    print(report)
+    gaps = store.gaps(args.symbol, tf)
+    print(f"gaps      {len(gaps)} (weekends excluded)")
+    for gap in gaps[: args.show_gaps]:
+        print(f"          {gap}")
+    return 0
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    """Replay stored history through the live decision path."""
+    from tradeapp.backtest import CostModel, gate_report, monte_carlo, run_backtest
+    from tradeapp.contracts import TF
+    from tradeapp.data import BarStore
+    from tradeapp.strategies import create
+
+    tf = TF(args.tf.upper())
+    bars = BarStore(args.db).load(args.symbol, tf)
+    if len(bars) <= args.warmup + 1:
+        print(f"only {len(bars)} bars stored for {args.symbol} {tf.value}; run: python -m tradeapp data sync")
+        return 1
+
+    costs = CostModel(
+        spread_points=args.spread,
+        use_bar_spread=not args.flat_spread,
+        slippage_points=args.slippage,
+        commission_per_lot_round_trip=args.commission,
+    )
+    result = run_backtest(
+        bars,
+        [create(args.strategy)],
+        symbol=args.symbol,
+        timeframe=tf,
+        costs=costs,
+        start_balance=args.balance,
+        warmup=args.warmup,
+    )
+
+    print(f"data      {len(bars)} bars  {bars[0].time_utc:%Y-%m-%d} → {bars[-1].time_utc:%Y-%m-%d}")
+    print(
+        f"costs     spread {'from bars' if not args.flat_spread else args.spread} · slippage {args.slippage}pt · commission {args.commission}/lot"
+    )
+    print(f"result    {result.summary()}")
+    s = result.stats
+    print(f"          win {s.wins}/{s.trades}  PF {s.profit_factor:.2f}  expectancy {s.expectancy:+.2f}")
+    print(
+        f"          maxDD {s.max_drawdown_pct:.2f}% ({s.max_drawdown_abs:.2f})  worst losing streak {s.longest_losing_streak}"
+    )
+    print(f"          avg hold {s.avg_hold_hours:.1f}h  exits {s.exits}")
+    print(f"costs     {s.costs:.2f} total (spread {s.spread_cost:.2f})  net before costs {s.net_before_costs:+.2f}")
+    if result.rejections:
+        print(f"rejected  {result.rejections}")
+
+    wf = None
+    if args.walk_forward:
+        from datetime import timedelta
+
+        from tradeapp.backtest import walk_forward
+
+        grid = [{"fast": f, "slow": sl} for f in (10, 20, 30) for sl in (50, 100) if f < sl]
+        print(f"\nwalk-forward over {len(grid)} parameter sets, train 180d / test 60d ...")
+        wf = walk_forward(
+            bars,
+            build=lambda prm: [create(args.strategy, **prm)],
+            param_grid=grid,
+            train=timedelta(days=180),
+            test=timedelta(days=60),
+            step=timedelta(days=60),
+            symbol=args.symbol,
+            timeframe=tf,
+            costs=costs,
+            start_balance=args.balance,
+            warmup=args.warmup,
+        )
+        print(f"          {wf.summary()}")
+        for w in wf.windows[: args.show_windows]:
+            print(
+                f"          {w.test_from:%Y-%m-%d} in {w.train_return_pct:+.2f}% -> out {w.test_return_pct:+.2f}% "
+                f"({w.test_trades} trades) {w.params}"
+            )
+
+    if s.trades:
+        mc = monte_carlo(result.trades, result.start_balance, runs=args.monte_carlo)
+        print(f"montecarlo {mc.summary()}")
+        print(f"gates     {gate_report(result, mc, wf)}")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Start the trading loop. This one really trades, on whatever account the profile points at."""
     from tradeapp.contracts import TF
@@ -374,6 +488,31 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--fast", type=int, default=20)
     g.add_argument("--slow", type=int, default=50)
     g.set_defaults(fn=cmd_signals)
+
+    dt = sub.add_parser("data", help="sync and inspect the local history store")
+    dt.add_argument("action", choices=["sync", "info"])
+    dt.add_argument("--symbol", default="EURUSD")
+    dt.add_argument("--tf", default="H4")
+    dt.add_argument("--count", type=int, default=5000, help="bars to pull from MT5")
+    dt.add_argument("--db", default="data/history.db")
+    dt.add_argument("--show-gaps", type=int, default=5)
+    dt.set_defaults(fn=cmd_data)
+
+    bt = sub.add_parser("backtest", help="replay stored history through the live decision path")
+    bt.add_argument("--symbol", default="EURUSD")
+    bt.add_argument("--tf", default="H4")
+    bt.add_argument("--strategy", default="ema_cross")
+    bt.add_argument("--balance", type=float, default=10_000.0)
+    bt.add_argument("--warmup", type=int, default=100)
+    bt.add_argument("--spread", type=int, default=20, help="fallback spread in points (XM measured 20)")
+    bt.add_argument("--flat-spread", action="store_true", help="ignore per-bar spread and use --spread")
+    bt.add_argument("--slippage", type=float, default=0.3)
+    bt.add_argument("--commission", type=float, default=0.0, help="per lot, round trip")
+    bt.add_argument("--monte-carlo", type=int, default=1000, help="shuffles")
+    bt.add_argument("--walk-forward", action="store_true", help="also fit and test on rolling windows")
+    bt.add_argument("--show-windows", type=int, default=8)
+    bt.add_argument("--db", default="data/history.db")
+    bt.set_defaults(fn=cmd_backtest)
 
     rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
     rn.add_argument("--symbol", default="EURUSD")

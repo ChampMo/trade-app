@@ -72,6 +72,16 @@ python -m tradeapp run --fake --max-ticks 5
 python -m tradeapp run
 ```
 
+ดึงประวัติราคาจาก MT5 แล้วรัน backtest ผ่านเส้นทางตัดสินใจเดียวกับตอนเทรดจริง
+
+```bash
+python -m tradeapp data sync --tf H4 --count 20000
+```
+
+```bash
+python -m tradeapp backtest --tf H4 --walk-forward
+```
+
 เทสและ lint
 
 ```bash
@@ -93,6 +103,8 @@ src/tradeapp/
   execution.py        ที่เดียวที่เปิดออเดอร์ได้ · retry · slippage · บังคับกฎ SL
   reconcile.py        เทียบกับโบรก โบรกคือความจริง
   journal/            SQLite ผ่าน SQLAlchemy · ทุกการตัดสินใจลงที่นี่
+  backtest/           ย้อนอดีตด้วยเส้นทางตัดสินใจเดียวกับของจริง · cost model · walk-forward · Monte Carlo
+  data.py             คลังแท่งเทียน SQLite · sync เพิ่มได้ · รายงาน gap โดยไม่นับวันหยุดสุดสัปดาห์
   smoke.py            เปิดปิดออเดอร์ 1 ไม้ พร้อม log ทุกขั้น
 tests/                รวม test_no_claude_dependency และ test_no_secrets
 docs/                 แผน การตัดสินใจ wireframe
