@@ -30,6 +30,12 @@ pip install -e ".[dev,mt5]"
 python -m tradeapp check
 ```
 
+ดูว่า Risk Engine จะตัดสินใจอย่างไรกับราคาปัจจุบัน คำสั่งนี้ไม่ส่งออเดอร์
+
+```bash
+python -m tradeapp risk --stop-points 200
+```
+
 5. ลอง smoke แบบไม่ต้องมี MT5 ก่อน แล้วค่อยรันจริงบน demo ตอนตลาดเปิด
 
 ```bash

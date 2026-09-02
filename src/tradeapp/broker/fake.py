@@ -99,6 +99,10 @@ class FakeBroker:
             stops_level_points=0,
             spread_points=self.behavior.spread_points,
             trade_allowed=True,
+            tick_size=self.point,
+            tick_value=1.0,  # EURUSD-like: 1 lot moving one 0.00001 tick is worth $1
+            volume_max=100.0,
+            contract_size=100_000.0,
         )
 
     def tick(self, symbol: str) -> Tick:

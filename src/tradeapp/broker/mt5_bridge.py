@@ -247,6 +247,10 @@ class MT5Broker:
             stops_level_points=int(info.trade_stops_level),
             spread_points=int(info.spread),
             trade_allowed=int(getattr(info, "trade_mode", 4)) != 0,  # SYMBOL_TRADE_MODE_DISABLED == 0
+            tick_size=float(getattr(info, "trade_tick_size", 0.0) or info.point),
+            tick_value=float(getattr(info, "trade_tick_value", 0.0)),
+            volume_max=float(getattr(info, "volume_max", 0.0)),
+            contract_size=float(getattr(info, "trade_contract_size", 0.0)),
         )
 
     def tick(self, symbol: str) -> Tick:

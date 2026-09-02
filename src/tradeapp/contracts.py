@@ -55,6 +55,12 @@ class SymbolInfo:
     stops_level_points: int  # broker minimum SL/TP distance, in points
     spread_points: int
     trade_allowed: bool
+    # Sizing inputs. tick_value is what one tick of movement is worth for one lot, already in the
+    # account currency, so position sizing works for any symbol without an FX conversion table.
+    tick_size: float = 0.0
+    tick_value: float = 0.0
+    volume_max: float = 0.0
+    contract_size: float = 0.0
 
 
 @dataclass(frozen=True)

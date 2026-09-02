@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 
 from tradeapp.config import load_settings
 from tradeapp.contracts import LiveAccountBlocked, Side
@@ -92,6 +93,64 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def cmd_risk(args: argparse.Namespace) -> int:
+    """Ask the Risk Engine what it would do with a hypothetical intent, against live prices.
+
+    Read-only by construction: it builds an OrderRequest and prints it, and there is no code path
+    from here to the broker. Use it to see the sizing on the account as it stands right now.
+    """
+    from tradeapp.contracts import Intent
+    from tradeapp.risk import RiskContext, RiskEngine, RiskLimits
+
+    settings = load_settings()
+    broker = _mt5_broker(settings)
+    acct = broker.connect()
+    sym = broker.symbol_info(args.symbol)
+    tick = broker.tick(args.symbol)
+    positions = broker.positions()
+    broker.disconnect()
+
+    side = Side.SHORT if args.short else Side.LONG
+    entry = tick.bid if side is Side.SHORT else tick.ask
+    distance = args.stop_points * sym.point
+    stop = round(entry + distance, sym.digits) if side is Side.SHORT else round(entry - distance, sym.digits)
+    take = round(entry - 2 * distance, sym.digits) if side is Side.SHORT else round(entry + 2 * distance, sym.digits)
+
+    intent = Intent(
+        symbol=args.symbol,
+        side=side,
+        confidence=args.confidence,
+        stop_price=stop,
+        take_price=take,
+        reason="risk preview from the command line",
+    )
+    ctx = RiskContext(
+        account=acct,
+        symbols={args.symbol: sym},
+        tick=tick,
+        positions=positions,
+        now_utc=datetime.now(UTC),
+        # A preview has no history to draw on, so it assumes a clean slate: today's equity is also
+        # the day's opening and the all-time peak. The live engine reads both from the journal.
+        day_start_equity=acct.equity,
+        peak_equity=acct.equity,
+    )
+    decision = RiskEngine(RiskLimits(), magic_base=settings.magic_base).evaluate(intent, args.strategy, ctx)
+
+    print(f"account   {acct.login}@{acct.server} equity {acct.equity:.2f} {acct.currency}")
+    print(
+        f"intent    {side.value} {args.symbol} entry~{entry} stop {stop} ({args.stop_points:.0f} points) conf {args.confidence}"
+    )
+    print(f"open      {len(positions)} position(s)")
+    print(f"verdict   {decision.verdict.value}" + (f" [{decision.reason.value}]" if decision.reason else ""))
+    print(f"          {decision.detail}")
+    if decision.order:
+        o = decision.order
+        print(f"order     {o.volume} lots  sl {o.stop_price}  tp {o.take_price}  magic {o.magic}")
+        print("          not sent: this command never reaches the broker")
+    return 0 if decision.approved else 1
+
+
 def cmd_journal(args: argparse.Namespace) -> int:
     settings = load_settings()
     journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
@@ -116,6 +175,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--fake", action="store_true", help="use FakeBroker instead of MT5")
     s.add_argument("--no-db", action="store_true", help="with --fake: use an in-memory journal")
     s.set_defaults(fn=cmd_smoke)
+
+    r = sub.add_parser("risk", help="show what the Risk Engine would do with an intent (sends nothing)")
+    r.add_argument("--symbol", default="EURUSD")
+    r.add_argument("--stop-points", type=float, default=200.0, help="stop distance in points")
+    r.add_argument("--confidence", type=float, default=1.0)
+    r.add_argument("--strategy", default="preview")
+    r.add_argument("--short", action="store_true")
+    r.set_defaults(fn=cmd_risk)
 
     j = sub.add_parser("journal", help="print the last events")
     j.add_argument("--tail", type=int, default=20)
