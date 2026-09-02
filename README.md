@@ -42,6 +42,12 @@ python -m tradeapp risk --stop-points 200
 python -m tradeapp signals --tf H4
 ```
 
+เทียบโพซิชันจริงที่โบรกกับที่ journal คิดว่ามี
+
+```bash
+python -m tradeapp reconcile
+```
+
 ซ้อมกดเบรกฉุกเฉิน ยิงทุก trigger ใส่โบรกจำลอง แล้วบันทึกผลลง journal
 
 ```bash

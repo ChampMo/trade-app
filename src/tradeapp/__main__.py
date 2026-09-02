@@ -209,6 +209,34 @@ def cmd_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Compare what the broker actually holds against what the journal believes."""
+    from tradeapp.reconcile import Reconciler
+
+    settings = load_settings()
+    journal = Journal(settings.journal_path)
+    broker = _mt5_broker(settings)
+    acct = broker.connect()
+    rec = Reconciler(broker, journal)
+    result = rec.run()
+    broker.disconnect()
+
+    print(f"account   {acct.login}@{acct.server}")
+    print(f"result    {result.summary()}")
+    for pos in result.orphans:
+        print(f"  ORPHAN      {pos.ticket} {pos.symbol} {pos.side.value} {pos.volume} sl {pos.sl} magic {pos.magic}")
+    for pos in result.unprotected:
+        print(f"  NO STOP     {pos.ticket} {pos.symbol} {pos.volume}  (rule 03)")
+    for ticket in result.ghosts:
+        print(f"  CLOSED      {ticket} closed at the broker without us; recorded")
+    for pos in result.foreign:
+        print(f"  NOT OURS    {pos.ticket} {pos.symbol} magic {pos.magic}")
+    if rec.frozen:
+        print(f"\nFROZEN    {rec.freeze_reason}")
+        print("          no new entries until this is resolved by hand")
+    return 0 if result.ok else 1
+
+
 def cmd_drill(args: argparse.Namespace) -> int:
     """Fire every kill-switch trigger on purpose and report what happened."""
     from tradeapp.drill import run_drills
@@ -266,6 +294,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--fast", type=int, default=20)
     g.add_argument("--slow", type=int, default=50)
     g.set_defaults(fn=cmd_signals)
+
+    rc = sub.add_parser("reconcile", help="compare broker positions against the journal")
+    rc.set_defaults(fn=cmd_reconcile)
 
     d = sub.add_parser("drill", help="fire every kill-switch trigger against a simulated broker")
     d.set_defaults(fn=cmd_drill)

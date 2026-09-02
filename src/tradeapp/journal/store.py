@@ -122,6 +122,25 @@ class Journal:
         with self._session() as s:
             return list(s.execute(select(Order).where(Order.client_ref == client_ref).order_by(Order.id)).scalars())
 
+    def open_position_tickets(self) -> set[int]:
+        """Positions the journal believes are still open: opened successfully, never closed successfully.
+
+        Derived from the ledger rather than kept as state, so it cannot drift out of sync with the
+        rows it is supposed to summarise.
+        """
+        with self._session() as s:
+            opened = s.execute(
+                select(Order.position_ticket).where(
+                    Order.kind == "open", Order.ok.is_(True), Order.position_ticket.is_not(None)
+                )
+            ).scalars()
+            closed = s.execute(
+                select(Order.position_ticket).where(
+                    Order.kind == "close", Order.ok.is_(True), Order.position_ticket.is_not(None)
+                )
+            ).scalars()
+            return set(opened) - set(closed)
+
     def events_where(self, severity: str | None = None, source: str | None = None) -> list[Event]:
         with self._session() as s:
             q = select(Event).order_by(Event.id)
