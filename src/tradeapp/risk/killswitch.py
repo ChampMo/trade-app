@@ -155,8 +155,15 @@ class KillSwitch:
     # --- the emergency path ------------------------------------------------------
 
     def check_and_trip(self, health: SystemHealth, broker: Any) -> KillReport | None:
-        """Evaluate, and fire if anything is over the line. The loop calls this every tick."""
-        if self.state is EngineState.KILLED:
+        """Evaluate, and fire if anything is over the line. The loop calls this every tick.
+
+        Only while RUNNING. That is not an optimisation, it is what makes unlocking possible: the
+        condition that caused a kill is usually still true afterwards (equity does not recover
+        because someone typed a reason), so a switch that re-evaluated while PAUSED would slam
+        shut on the next tick and the operator could never get back in. Positions are already flat
+        by then, and anything opened later is opened from RUNNING, where the switch is live again.
+        """
+        if self.state is not EngineState.RUNNING:
             return None
         fired = self.evaluate(health)
         if fired is None:

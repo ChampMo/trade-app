@@ -27,6 +27,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/contracts.py` — dataclasses and Protocols (`Intent`, `Strategy`, `Broker`, `OrderRequest`, ...). Change with care; everything depends on them.
 - `src/tradeapp/broker/` — `mt5_bridge.py` (real MT5), `fake.py` (deterministic fake for tests), `guard.py` (live-account guard).
 - `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic; `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection; `killswitch.py` is the emergency brake (rule 06, D12a) and is the one module allowed to close positions directly, never to open them. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
+- `src/tradeapp/core.py` — **the loop**, and the one place everything is wired together. Order is safety first: read the account, reconcile on a timer, let the kill switch fire, and only then look for a new closed bar. A tick that finds trouble never reaches the trading step. Peak and day-start equity live in the journal's `state` table so a restart cannot erase the drawdown history (D21).
 - `src/tradeapp/strategies/` — plugins. One file per strategy, registered with `@register`; a new strategy touches nothing else. `src/tradeapp/runtime.py` runs them and disables any that raises or returns nonsense, without stopping the others.
 - `src/tradeapp/context.py` + `indicators.py` — the only view a strategy has of the world (rule 04). Indicators match MT5's definitions (SMA-seeded EMA, Wilder ATR/RSI) and return `None` during warm-up.
 - `src/tradeapp/reconcile.py` — the broker is the truth. Orphans (broker has it, ledger does not) freeze new entries; ghosts (ledger has it, broker does not) are a stop doing its job and are recorded quietly (D17). Feeds `reconcile_mismatch` and `positions_without_stop` to the kill switch.
@@ -53,7 +54,11 @@ pytest -q
 # Phase 0 checks
 python -m tradeapp check          # connect to MT5, print account/terminal/symbol info, no orders
 python -m tradeapp risk           # what the Risk Engine would do with an intent right now (sends nothing)
+python -m tradeapp signals        # bars -> strategies -> Risk Engine verdict on live data (sends nothing)
+python -m tradeapp reconcile      # compare broker positions against the journal
 python -m tradeapp drill          # fire every kill-switch trigger against a simulated broker
+python -m tradeapp run --fake     # the trading loop against a simulated broker
+python -m tradeapp run            # the trading loop for real, on the profile's account
 python -m tradeapp smoke --fake   # full smoke flow against FakeBroker (no MT5 needed)
 python -m tradeapp smoke          # real smoke on the DEMO account: open 0.01 lot, verify SL, close
 python -m tradeapp journal --tail 30

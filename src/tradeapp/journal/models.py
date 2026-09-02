@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2 adds the `state` table (D21)
 
 
 class Base(DeclarativeBase):
@@ -28,6 +28,21 @@ class SchemaVersion(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     version: Mapped[int] = mapped_column(Integer)
     applied_utc: Mapped[datetime] = mapped_column(DateTime)
+
+
+class State(Base):
+    """Small durable key/value store for facts that must survive a restart (D21).
+
+    Peak equity is the important one: if it reset on restart, the 30% drawdown limit would be
+    measured against today's balance instead of the real high-water mark, and closing the app
+    would silently erase the drawdown history the limit depends on.
+    """
+
+    __tablename__ = "state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON)
+    updated_utc: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Event(Base):

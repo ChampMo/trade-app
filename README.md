@@ -2,7 +2,7 @@
 
 Desktop app ควบคุมบอทเทรด MT5 (โบรก XM) · core เป็น Python แยกโปรเซสจาก UI · AI ตอนรันคือ DeepSeek ที่แก้ได้แค่ 3 ค่า · Claude Code ใช้เฉพาะตอนพัฒนา
 
-สถานะ: **Phase 0** · repo ตั้งแล้ว · รอเปิดบัญชี XM demo แล้วรัน smoke ครั้งแรก
+สถานะ: **Phase 1 เกือบครบ** · core loop, Risk Engine, kill switch, execution, reconcile, strategy runtime ทำงานแล้ว · เหลือ FastAPI, paper broker และการรันเป็น background process
 
 เอกสารหลัก
 
@@ -62,6 +62,16 @@ python -m tradeapp smoke
 python -m tradeapp journal --tail 30
 ```
 
+สตาร์ทลูปเทรดจริง คำสั่งนี้เปิดออเดอร์ได้จริงบนบัญชีของโปรไฟล์ที่ตั้งไว้ · ลองแบบจำลองก่อนด้วย `--fake`
+
+```bash
+python -m tradeapp run --fake --max-ticks 5
+```
+
+```bash
+python -m tradeapp run
+```
+
 เทสและ lint
 
 ```bash
@@ -73,11 +83,17 @@ ruff check src tests
 
 ```
 src/tradeapp/
-  contracts.py        Intent · OrderRequest · Broker Protocol · Strategy Protocol
-  config.py           Settings จาก .env (pydantic-settings)
-  broker/             mt5_bridge.py (MT5 จริง) · fake.py (เทส) · guard.py (กัน live)
+  core.py             ลูปหลัก ผูกทุกอย่างเข้าด้วยกัน ความปลอดภัยมาก่อนการเทรดเสมอ
+  contracts.py        Intent · OrderRequest · Bar · Broker Protocol · Strategy Protocol
+  config.py           Settings จาก .env · โปรไฟล์ demo/paper/live
+  broker/             mt5_bridge.py (MT5 จริง) · fake.py (เทส) · guard.py (กัน live) · servertime.py
+  risk/               engine.py (ประตูเดียวสู่ตลาด) · killswitch.py (เบรก) · sizing.py · limits.py
+  strategies/         ปลั๊กอิน หนึ่งกลยุทธ์หนึ่งไฟล์ · runtime.py รันและกันความพังไม่ให้ลาม
+  context.py          กล่องเดียวที่กลยุทธ์มองเห็นโลก · indicators.py สูตรตาม MT5
+  execution.py        ที่เดียวที่เปิดออเดอร์ได้ · retry · slippage · บังคับกฎ SL
+  reconcile.py        เทียบกับโบรก โบรกคือความจริง
   journal/            SQLite ผ่าน SQLAlchemy · ทุกการตัดสินใจลงที่นี่
-  smoke.py            Phase 0: เปิดปิดออเดอร์ 1 ไม้ พร้อม log ทุกขั้น
+  smoke.py            เปิดปิดออเดอร์ 1 ไม้ พร้อม log ทุกขั้น
 tests/                รวม test_no_claude_dependency และ test_no_secrets
 docs/                 แผน การตัดสินใจ wireframe
 ```

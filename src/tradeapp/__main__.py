@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import UTC, datetime
 
 from tradeapp.config import load_settings
@@ -209,6 +210,85 @@ def cmd_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run(args: argparse.Namespace) -> int:
+    """Start the trading loop. This one really trades, on whatever account the profile points at."""
+    from tradeapp.contracts import TF
+    from tradeapp.core import Core, CoreConfig
+    from tradeapp.risk import RiskLimits
+    from tradeapp.runtime import StrategyRuntime
+    from tradeapp.strategies import create, discover
+
+    settings = load_settings()
+    tf = TF(args.tf.upper())
+
+    if args.fake:
+        from tradeapp.broker.fake import FakeBroker
+
+        broker = FakeBroker()
+        journal = Journal(settings.simulated_journal_path)
+    else:
+        broker = _mt5_broker(settings)
+        journal = Journal(settings.journal_path)
+
+    runtime = StrategyRuntime(journal)
+    ids = [args.strategy] if args.strategy else sorted(discover())
+    for sid in ids:
+        runtime.register(create(sid))
+
+    core = Core(
+        broker,
+        journal,
+        runtime=runtime,
+        config=CoreConfig(
+            symbol=args.symbol, timeframe=tf, tick_interval_s=args.interval, reconcile_every_s=args.reconcile_every
+        ),
+        limits=RiskLimits(),
+        magic_base=settings.magic_base,
+    )
+
+    where = settings.simulated_journal_path if args.fake else settings.journal_path
+    print(f"config    profile={settings.profile.value} journal={where} live_enabled={settings.live_enabled}")
+    print(f"strategies {', '.join(ids)} on {args.symbol} {tf.value}" + ("  [simulated broker]" if args.fake else ""))
+    try:
+        acct = core.start()
+    except LiveAccountBlocked as e:
+        print(f"BLOCKED: {e}")
+        return 2
+    print(f"account   {acct.login}@{acct.server} {acct.mode.value} equity {acct.equity:.2f} {acct.currency}")
+    print(f"running   tick every {args.interval}s, reconcile every {args.reconcile_every}s — Ctrl+C to stop\n")
+
+    ticks = 0
+    try:
+        while args.max_ticks is None or ticks < args.max_ticks:
+            report = core.tick()
+            ticks += 1
+            flags = "".join(
+                [
+                    "K" if report.killed else "",
+                    "F" if report.frozen else "",
+                    "R" if report.reconciled else "",
+                    "B" if report.new_bar else "",
+                ]
+            )
+            line = (
+                f"{report.at_utc:%H:%M:%S} {report.state.value:<8} eq {report.equity:>10.2f} "
+                f"[{flags:<4}] signals {report.signals} sent {report.sent}"
+            )
+            print(line)
+            for note in report.notes:
+                print(f"           {note}")
+            if report.killed:
+                print("\nKILLED — unlock by hand before trading resumes")
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nstopping on Ctrl+C")
+    finally:
+        core.shutdown()
+    print("\nopen positions are left alone; their stops are at the broker (rule 03)")
+    return 0
+
+
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Compare what the broker actually holds against what the journal believes."""
     from tradeapp.reconcile import Reconciler
@@ -294,6 +374,16 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--fast", type=int, default=20)
     g.add_argument("--slow", type=int, default=50)
     g.set_defaults(fn=cmd_signals)
+
+    rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
+    rn.add_argument("--symbol", default="EURUSD")
+    rn.add_argument("--tf", default="H4")
+    rn.add_argument("--strategy", default=None)
+    rn.add_argument("--interval", type=float, default=5.0, help="seconds between ticks")
+    rn.add_argument("--reconcile-every", type=float, default=60.0)
+    rn.add_argument("--max-ticks", type=int, default=None)
+    rn.add_argument("--fake", action="store_true", help="drive a simulated broker instead of MT5")
+    rn.set_defaults(fn=cmd_run)
 
     rc = sub.add_parser("reconcile", help="compare broker positions against the journal")
     rc.set_defaults(fn=cmd_reconcile)

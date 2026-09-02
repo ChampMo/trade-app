@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tradeapp.journal.models import SCHEMA_VERSION, AICall, Base, Decision, Event, Order, SchemaVersion
+from tradeapp.journal.models import SCHEMA_VERSION, AICall, Base, Decision, Event, Order, SchemaVersion, State
 
 SEVERITIES = ("INFO", "WARN", "CRIT")
 
@@ -42,15 +42,37 @@ class Journal:
     # --- schema -----------------------------------------------------------------
 
     def _ensure_version(self) -> None:
+        """Additive upgrades apply themselves; a journal from newer code is refused.
+
+        `create_all` above has already added any missing tables, so stepping the recorded version
+        forward is the whole migration for additive changes. Running older code against a newer
+        journal is the dangerous direction and stops here.
+        """
         with self._session() as s:
             row = s.get(SchemaVersion, 1)
             if row is None:
                 s.add(SchemaVersion(id=1, version=SCHEMA_VERSION, applied_utc=utcnow()))
                 s.commit()
-            elif row.version != SCHEMA_VERSION:
+                return
+            if row.version > SCHEMA_VERSION:
                 raise RuntimeError(
-                    f"journal schema version {row.version} != code {SCHEMA_VERSION}; migrate before running"
+                    f"journal was written by schema version {row.version} but this code is {SCHEMA_VERSION}; "
+                    "upgrade the code rather than downgrading the journal"
                 )
+            if row.version < SCHEMA_VERSION:
+                previous = row.version
+                row.version = SCHEMA_VERSION
+                row.applied_utc = utcnow()
+                s.add(
+                    Event(
+                        ts_utc=utcnow(),
+                        severity="INFO",
+                        source="journal",
+                        message=f"journal schema upgraded {previous} -> {SCHEMA_VERSION}",
+                        data={"from": previous, "to": SCHEMA_VERSION},
+                    )
+                )
+                s.commit()
 
     @property
     def schema_version(self) -> int:
@@ -121,6 +143,23 @@ class Journal:
     def orders_for(self, client_ref: str) -> list[Order]:
         with self._session() as s:
             return list(s.execute(select(Order).where(Order.client_ref == client_ref).order_by(Order.id)).scalars())
+
+    # --- durable state (D21) -----------------------------------------------------
+
+    def get_state(self, key: str, default: Any = None) -> Any:
+        with self._session() as s:
+            row = s.get(State, key)
+            return row.value.get("v", default) if row else default
+
+    def set_state(self, key: str, value: Any) -> None:
+        with self._session() as s:
+            row = s.get(State, key)
+            if row is None:
+                s.add(State(key=key, value={"v": value}, updated_utc=utcnow()))
+            else:
+                row.value = {"v": value}
+                row.updated_utc = utcnow()
+            s.commit()
 
     def open_position_tickets(self) -> set[int]:
         """Positions the journal believes are still open: opened successfully, never closed successfully.
