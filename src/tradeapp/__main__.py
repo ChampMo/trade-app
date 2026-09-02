@@ -4,17 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from tradeapp.config import load_settings
 from tradeapp.contracts import LiveAccountBlocked, Side
 from tradeapp.journal import Journal
-
-
-def fake_journal_path(journal_db) -> Path:
-    """Sibling of the real journal, e.g. data/journal.db -> data/journal-fake.db."""
-    p = Path(journal_db)
-    return p.with_name(f"{p.stem}-fake{p.suffix}")
 
 
 def _mt5_broker(settings):
@@ -25,15 +18,17 @@ def _mt5_broker(settings):
         login=settings.mt5_login,
         password=settings.mt5_password_plain,
         server=settings.mt5_server,
-        allow_live=settings.allow_live,
+        allow_live=settings.live_enabled,
         timeout_ms=settings.mt5_timeout_ms,
+        reference_symbol=settings.reference_symbol,
     )
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     settings = load_settings()
-    journal = Journal(settings.journal_db)
+    journal = Journal(settings.journal_path)
     broker = _mt5_broker(settings)
+    print(f"config    {settings.describe()}")
     try:
         acct = broker.connect()
     except LiveAccountBlocked as e:
@@ -78,10 +73,10 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         broker = FakeBroker()
         # Simulated runs never touch the real journal: their fills are invented, and mixing them
         # into the record would poison every later report and post-mortem.
-        journal = Journal(":memory:" if args.no_db else fake_journal_path(settings.journal_db))
+        journal = Journal(":memory:" if args.no_db else settings.simulated_journal_path)
     else:
         broker = _mt5_broker(settings)
-        journal = Journal(settings.journal_db)
+        journal = Journal(settings.journal_path)
     report = run_smoke(
         broker,
         journal,
@@ -99,7 +94,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 def cmd_journal(args: argparse.Namespace) -> int:
     settings = load_settings()
-    journal = Journal(fake_journal_path(settings.journal_db) if args.fake else settings.journal_db)
+    journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
     for e in journal.tail_events(args.tail):
         print(f"{e.ts_utc:%Y-%m-%d %H:%M:%S}  {e.severity:<4} {e.source:<10} {e.message}  {e.data or ''}")
     return 0

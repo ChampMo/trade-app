@@ -77,9 +77,35 @@ RETCODE_RETRYABLE = (10004, 10020, 10021, 10024)  # requote, price changed, pric
 
 _TRADE_MODE = {0: AccountMode.DEMO, 1: AccountMode.CONTEST, 2: AccountMode.REAL}
 
+# `mt5.initialize` failures are reported as bare numbers. Each one has exactly one likely cause
+# on this setup, so say it rather than making the reader search MQL5 documentation.
+INIT_ERROR_HINTS: dict[int, str] = {
+    -2: "invalid parameters: check MT5_LOGIN, MT5_SERVER and MT5_PATH in .env",
+    -4: "terminal not found: check MT5_PATH points at an existing terminal64.exe",
+    -5: "terminal version too old: update MetaTrader 5",
+    -6: (
+        "the terminal is not logged in to a trading account. Most often the account number and the "
+        "server do not belong together (an XM account cannot log in to MetaQuotes-Demo, and vice versa) "
+        "— open File > Login to Trade Account and pick the server named in your broker's welcome email. "
+        "If MT5_LOGIN/MT5_SERVER are set in .env they must match that account exactly"
+    ),
+    -8: "automated trading is disabled: switch Algo Trading on in the terminal toolbar",
+    -10003: "terminal is starting or busy; retry in a few seconds",
+}
+
 
 def describe_retcode(code: int) -> str:
     return RETCODE_DESC.get(code, f"UNKNOWN_{code}")
+
+
+def describe_init_error(err: Any) -> str:
+    """Turn `mt5.last_error()` into something the reader can act on."""
+    try:
+        code, text = int(err[0]), str(err[1])
+    except (TypeError, ValueError, IndexError):
+        return str(err)
+    hint = INIT_ERROR_HINTS.get(code)
+    return f"{text} (code {code}) — {hint}" if hint else f"{text} (code {code})"
 
 
 def _as_dict(obj: Any) -> dict[str, Any]:
@@ -141,7 +167,7 @@ class MT5Broker:
         if self.login:
             kwargs.update(login=self.login, password=self.password or "", server=self.server or "")
         if not mt5.initialize(**kwargs):
-            raise BrokerError(f"mt5.initialize failed: {mt5.last_error()}")
+            raise BrokerError(f"mt5.initialize failed: {describe_init_error(mt5.last_error())}")
         try:
             account = self._read_account(mt5)
             enforce_live_guard(account, self.allow_live)

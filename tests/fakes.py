@@ -9,11 +9,19 @@ class FakeMT5Module:
 
     ORDER_FILLING_FOK, ORDER_FILLING_IOC, ORDER_FILLING_RETURN = 0, 1, 2
 
-    def __init__(self, trade_mode: int, init_ok: bool = True, server_offset_min: int = 180, tick: bool = True):
+    def __init__(
+        self,
+        trade_mode: int,
+        init_ok: bool = True,
+        server_offset_min: int = 180,
+        tick: bool = True,
+        last_error: tuple[int, str] = (-1, "fake error"),
+    ):
         self._trade_mode = trade_mode
         self._init_ok = init_ok
         self._server_offset_min = server_offset_min
         self._has_tick = tick
+        self._last_error = last_error
         self.shutdown_calls = 0
         self.init_kwargs = None
 
@@ -25,7 +33,7 @@ class FakeMT5Module:
         self.shutdown_calls += 1
 
     def last_error(self):
-        return (-1, "fake error")
+        return self._last_error
 
     def account_info(self):
         return SimpleNamespace(

@@ -20,7 +20,8 @@ Legend: `[ ]` todo · `[~]` in progress (write the branch name) · `[x]` done (w
 
 ## Phase 1 — engine + risk (weeks 2–3)
 
-- [ ] P1-01 Config & profiles: `Settings` gains `profile` (demo/live), separate DB per profile, core listens on 8001 (demo) / 8002 (live). Done when: two cores can start side by side with different `.env` files.
+- [x] P1-01 Config & profiles. Done 2026-09-02: `Profile` = demo | paper | live, each with its own journal (`data/journal-<profile>.db`) and port (8001/8001/8002, overridable via `API_PORT`); `ALLOW_LIVE` on a non-live profile is now a load-time error, and `live_enabled` is the single value handed to the broker guard. The "two cores side by side" half of the check needs the API, so it is verified under P1-09.
+- [ ] P1-01b MT5 startup diagnostics beyond `initialize`: retry on `-10003` (terminal busy) and detect a terminal that is running but logged out, so the core does not spin. Done when: a test drives both paths. (The one-line hints for `-2/-4/-5/-6/-8` landed with P1-01.)
 - [ ] P1-02 Strategy runtime: load strategy plugins from `src/tradeapp/strategies/`, each in its own asyncio task, exception in one → that one disabled + event, others continue. Done when: test injects an exception and only that strategy stops.
 - [ ] P1-03 Context v0: recent bars (from MT5 or cache), precomputed indicators (EMA, ATR, RSI), `ctx.ai` stub returning neutral values. Done when: a trivial strategy runs `on_bar` against a recorded bar file.
 - [ ] P1-04 Risk Engine v0: position sizing from `risk_pct` × `size_mult`, daily loss limit, max drawdown, max positions, max open risk, per-currency netting, trading hours, news-block hook (stub). Every rejection has a reason and is journaled as a `decisions` row. Done when: one test per rejection reason; all pass.
