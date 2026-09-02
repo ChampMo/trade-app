@@ -49,11 +49,20 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(
         f"{args.symbol}  bid {tick.bid} ask {tick.ask}  spread {sym.spread_points}pt  stops_level {sym.stops_level_points}pt  vol_min {sym.volume_min}"
     )
+    print(f"clock     {broker.server_offset.describe()}")
+    print(f"          broker shows {tick.time_server}  =  {tick.time_utc:%Y-%m-%d %H:%M:%S} UTC")
     journal.event(
         "INFO",
         "core",
         "check ok",
-        {"login": acct.login, "mode": acct.mode.value, "symbol": args.symbol, "spread_points": sym.spread_points},
+        {
+            "login": acct.login,
+            "mode": acct.mode.value,
+            "symbol": args.symbol,
+            "spread_points": sym.spread_points,
+            "server_utc_offset_min": broker.server_offset.minutes,
+            "server_offset_confident": broker.server_offset.confident,
+        },
     )
     broker.disconnect()
     return 0

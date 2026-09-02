@@ -11,10 +11,11 @@ Rules enforced here:
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import Any
 
 from tradeapp.broker.guard import enforce_live_guard
+from tradeapp.broker.servertime import ServerTimeOffset, epoch_to_server_wall, measure_offset, server_to_utc
 from tradeapp.contracts import (
     AccountInfo,
     AccountMode,
@@ -105,6 +106,7 @@ class MT5Broker:
         server: str | None = None,
         allow_live: bool = False,
         timeout_ms: int = 60_000,
+        reference_symbol: str = "EURUSD",
         mt5_module: Any | None = None,
     ) -> None:
         self.path = path
@@ -113,9 +115,11 @@ class MT5Broker:
         self.server = server
         self.allow_live = allow_live
         self.timeout_ms = timeout_ms
+        self.reference_symbol = reference_symbol
         self._mt5 = mt5_module
         self._account: AccountInfo | None = None
         self._digits: dict[str, int] = {}
+        self.server_offset = ServerTimeOffset(None, None, False, "not measured yet")
         self.connected = False
 
     # --- lifecycle ---------------------------------------------------------------
@@ -146,7 +150,22 @@ class MT5Broker:
             raise
         self._account = account
         self.connected = True
+        # Best effort: an unmeasurable offset (closed market, unknown symbol) must not block connecting.
+        try:
+            self.refresh_server_offset()
+        except BrokerError:
+            self.server_offset = ServerTimeOffset(None, None, False, "reference symbol unavailable")
         return account
+
+    def refresh_server_offset(self, symbol: str | None = None) -> ServerTimeOffset:
+        """Re-measure the broker clock. Call after a reconnect and around DST changes."""
+        mt5 = self._lib()
+        sym = symbol or self.reference_symbol
+        raw = mt5.symbol_info_tick(sym)
+        if raw is None:
+            raise BrokerError(f"symbol_info_tick({sym}) failed: {mt5.last_error()}")
+        self.server_offset = measure_offset(raw.time)
+        return self.server_offset
 
     def disconnect(self) -> None:
         if self.connected:
@@ -213,12 +232,17 @@ class MT5Broker:
         if symbol not in self._digits:
             self.symbol_info(symbol)
         d = self._digits[symbol]
-        # MT5 gives an epoch that represents server time; P0-08 records the server offset alongside.
+        # t.time is the broker's wall clock, not UTC (D13). Convert it, and say so when we cannot.
+        wall = epoch_to_server_wall(t.time)
+        offset = self.server_offset.minutes
+        as_utc = server_to_utc(wall, offset) if offset is not None else wall.replace(tzinfo=UTC)
         return Tick(
             symbol=symbol,
             bid=round(float(t.bid), d),
             ask=round(float(t.ask), d),
-            time_utc=datetime.fromtimestamp(t.time, UTC),
+            time_utc=as_utc,
+            time_server=wall,
+            server_utc_offset_min=offset,
         )
 
     def _filling(self, symbol: str) -> int:

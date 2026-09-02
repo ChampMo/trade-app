@@ -62,7 +62,9 @@ class Tick:
     symbol: str
     bid: float
     ask: float
-    time_utc: datetime  # see D13: MT5 tick time is server time expressed as an epoch; converted by the bridge
+    time_utc: datetime  # real UTC, converted with the measured server offset (D13, P0-08)
+    time_server: datetime | None = None  # the broker's own wall clock, naive, exactly as MT5 reported it
+    server_utc_offset_min: int | None = None  # None means the offset could not be measured; time_utc is then a guess
 
 
 @dataclass(frozen=True)

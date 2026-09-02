@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from tradeapp.broker.guard import enforce_live_guard
+from tradeapp.broker.servertime import ServerTimeOffset, utc_to_server
 from tradeapp.contracts import (
     AccountInfo,
     AccountMode,
@@ -42,6 +43,7 @@ class FakeBroker:
     login: int = 90000001
     server: str = "Fake-Demo"
     balance: float = 10_000.0
+    server_offset_min: int = 180  # EET summer, like XM
     connected: bool = False
     _positions: dict[int, Position] = field(default_factory=dict)
     _next_ticket: int = 500_001
@@ -79,6 +81,10 @@ class FakeBroker:
     # --- market data -------------------------------------------------------------
 
     @property
+    def server_offset(self) -> ServerTimeOffset:
+        return ServerTimeOffset(self.server_offset_min, 0.0, True, "fake broker")
+
+    @property
     def ask(self) -> float:
         return round(self.bid + self.behavior.spread_points * self.point, self.digits)
 
@@ -97,7 +103,15 @@ class FakeBroker:
 
     def tick(self, symbol: str) -> Tick:
         self._require()
-        return Tick(symbol=symbol, bid=self.bid, ask=self.ask, time_utc=datetime.now(UTC))
+        now = datetime.now(UTC)
+        return Tick(
+            symbol=symbol,
+            bid=self.bid,
+            ask=self.ask,
+            time_utc=now,
+            time_server=utc_to_server(now, self.server_offset_min),
+            server_utc_offset_min=self.server_offset_min,
+        )
 
     def move(self, points: float) -> None:
         """Move the market; open positions re-price."""

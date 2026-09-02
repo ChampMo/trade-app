@@ -1,9 +1,8 @@
 """Rule 8: a REAL account is refused unless ALLOW_LIVE. Exercised through the guard, FakeBroker and the MT5 bridge."""
 
-from types import SimpleNamespace
-
 import pytest
 
+from tests.fakes import FakeMT5Module
 from tradeapp.broker.fake import FakeBehavior, FakeBroker
 from tradeapp.broker.guard import enforce_live_guard
 from tradeapp.broker.mt5_bridge import MT5Broker
@@ -32,42 +31,6 @@ def test_fake_broker_refuses_real():
     with pytest.raises(LiveAccountBlocked):
         b.connect()
     assert b.connected is False
-
-
-class FakeMT5Module:
-    """Minimal surface of the MetaTrader5 package used by MT5Broker.connect()."""
-
-    ORDER_FILLING_FOK, ORDER_FILLING_IOC, ORDER_FILLING_RETURN = 0, 1, 2
-
-    def __init__(self, trade_mode: int, init_ok: bool = True):
-        self._trade_mode = trade_mode
-        self._init_ok = init_ok
-        self.shutdown_calls = 0
-        self.init_kwargs = None
-
-    def initialize(self, **kwargs):
-        self.init_kwargs = kwargs
-        return self._init_ok
-
-    def shutdown(self):
-        self.shutdown_calls += 1
-
-    def last_error(self):
-        return (-1, "fake error")
-
-    def account_info(self):
-        return SimpleNamespace(
-            login=123,
-            server="XM-Demo",
-            trade_mode=self._trade_mode,
-            balance=10.0,
-            equity=10.0,
-            currency="USD",
-            leverage=500,
-        )
-
-    def terminal_info(self):
-        return SimpleNamespace(trade_allowed=True, connected=True)
 
 
 def test_bridge_blocks_real_and_shuts_down():

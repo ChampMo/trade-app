@@ -28,6 +28,7 @@ class SmokeReport:
     sl_verified: bool | None = None
     open_slippage_points: float | None = None
     close_slippage_points: float | None = None
+    server_utc_offset_min: int | None = None
     pnl: float | None = None
     error: str | None = None
 
@@ -152,8 +153,24 @@ def run_smoke(
         if not acct.algo_trading:
             raise RuntimeError("terminal has Algo Trading disabled; enable it on the MT5 toolbar")
 
+        offset = getattr(broker, "server_offset", None)
+        if offset is not None:
+            report.step(offset.describe())
+            journal.event(
+                "INFO",
+                SOURCE,
+                "server clock",
+                {
+                    "server_utc_offset_min": offset.minutes,
+                    "tick_age_s": offset.tick_age_s,
+                    "confident": offset.confident,
+                    "note": offset.note,
+                },
+            )
+
         sym = broker.symbol_info(symbol)
         tick = broker.tick(symbol)
+        report.server_utc_offset_min = tick.server_utc_offset_min
         report.step(
             f"{symbol} bid={tick.bid} ask={tick.ask} spread={sym.spread_points}pt stops_level={sym.stops_level_points}pt"
         )
@@ -169,6 +186,10 @@ def run_smoke(
                 "stops_level_points": sym.stops_level_points,
                 "point": sym.point,
                 "digits": sym.digits,
+                # every row carrying broker time carries the offset that makes it comparable (D13)
+                "tick_time_server": tick.time_server.isoformat() if tick.time_server else None,
+                "tick_time_utc": tick.time_utc.isoformat(),
+                "server_utc_offset_min": tick.server_utc_offset_min,
             },
         )
         if not sym.trade_allowed:
