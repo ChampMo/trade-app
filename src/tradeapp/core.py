@@ -46,6 +46,7 @@ class CoreConfig:
     history_bars: int = 300
     reconcile_every_s: float = 60.0
     tick_interval_s: float = 5.0
+    calendar_db: str = "data/calendar.db"
 
 
 @dataclass
@@ -77,6 +78,7 @@ class Core:
         config: CoreConfig | None = None,
         limits: RiskLimits | None = None,
         magic_base: int = 100_000,
+        news=None,
         notifier=None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], None] = time.sleep,
@@ -89,7 +91,7 @@ class Core:
         self._now = now
         self._sleep = sleep
 
-        self.engine = RiskEngine(self.limits, journal=journal, magic_base=magic_base)
+        self.engine = RiskEngine(self.limits, journal=journal, news=news, magic_base=magic_base)
         self.executor = Executor(broker, journal, now=now, sleep=sleep)
         self.reconciler = Reconciler(broker, journal, now=now)
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)

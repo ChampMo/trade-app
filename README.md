@@ -90,6 +90,16 @@ python -m tradeapp data sync --tf H4 --count 20000
 python -m tradeapp backtest --tf H4 --walk-forward
 ```
 
+นำเข้าปฏิทินข่าวแล้วดูว่าช่วงไหนจะถูกบล็อก ส่วนนี้ไม่ใช้ LLM เลย
+
+```bash
+python -m tradeapp calendar import --file week.json
+```
+
+```bash
+python -m tradeapp calendar show --hours 72
+```
+
 เทสและ lint
 
 ```bash

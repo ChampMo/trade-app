@@ -324,6 +324,62 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _news_blocker(db: str, quiet: bool = True):
+    """A calendar with no events blocks nothing, so an empty store is not an error — but say so."""
+    from tradeapp.calendar import CalendarStore, NewsWindows
+
+    store = CalendarStore(db)
+    if store.count() == 0:
+        if not quiet:
+            print("calendar  empty — nothing will be blocked. Import one: python -m tradeapp calendar import <file>")
+        return None
+    if not quiet:
+        first, last = store.range()
+        print(f"calendar  {store.count()} events, {first:%Y-%m-%d} to {last:%Y-%m-%d}")
+    return NewsWindows(store)
+
+
+def cmd_calendar(args: argparse.Namespace) -> int:
+    """Import and inspect the economic calendar. No model is involved anywhere here."""
+    from datetime import timedelta
+
+    from tradeapp.calendar import CalendarStore, Impact, NewsWindows, fetch_url, load_file
+
+    store = CalendarStore(args.db)
+
+    if args.action == "import":
+        if not args.file:
+            print("give a JSON file: python -m tradeapp calendar import --file week.json")
+            return 1
+        added = load_file(args.file, store)
+        print(f"imported  +{added} new, {store.count()} total")
+    elif args.action == "fetch":
+        if not args.url:
+            print("give the feed URL you have chosen: python -m tradeapp calendar fetch --url https://...")
+            print("there is no default on purpose; which calendar to trust is your decision")
+            return 1
+        added = fetch_url(args.url, store)
+        print(f"fetched   +{added} new, {store.count()} total")
+
+    if store.count() == 0:
+        print("calendar is empty")
+        return 0
+
+    first, last = store.range()
+    print(f"stored    {store.count()} events, {first:%Y-%m-%d} to {last:%Y-%m-%d}")
+    now = datetime.now(UTC)
+    upcoming = store.upcoming(now, hours=args.hours, min_impact=Impact.HIGH)
+    print(f"next {args.hours}h  {len(upcoming)} high-impact event(s)")
+    for e in upcoming[:20]:
+        print(f"  {e}")
+    blocked = NewsWindows(store).windows(args.symbol, now, now + timedelta(hours=args.hours))
+    if blocked:
+        print(f"blocked windows for {args.symbol}:")
+        for start, end, label in blocked[:20]:
+            print(f"  {start:%Y-%m-%d %H:%M} → {end:%H:%M} UTC  {label}")
+    return 0
+
+
 def _build_core(settings, args, journal):
     """Assemble broker + strategies + core the same way for `run` and `serve`."""
     from tradeapp.contracts import TF
@@ -349,6 +405,8 @@ def _build_core(settings, args, journal):
     for sid in ids:
         runtime.register(create(sid))
 
+    news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
+
     core = Core(
         broker,
         journal,
@@ -360,6 +418,7 @@ def _build_core(settings, args, journal):
             reconcile_every_s=args.reconcile_every,
         ),
         limits=RiskLimits(),
+        news=news,
         magic_base=settings.magic_base,
     )
     return core, ids, tf
@@ -495,6 +554,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     for sid in ids:
         runtime.register(create(sid))
 
+    news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
+
     core = Core(
         broker,
         journal,
@@ -503,6 +564,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             symbol=args.symbol, timeframe=tf, tick_interval_s=args.interval, reconcile_every_s=args.reconcile_every
         ),
         limits=RiskLimits(),
+        news=news,
         magic_base=settings.magic_base,
     )
 
@@ -668,6 +730,15 @@ def main(argv: list[str] | None = None) -> int:
     lf.add_argument("--tf", default="H4")
     lf.add_argument("--db", default="data/history.db")
     lf.set_defaults(fn=cmd_lifecycle)
+
+    cal = sub.add_parser("calendar", help="economic calendar: import, fetch, and see what will be blocked")
+    cal.add_argument("action", choices=["show", "import", "fetch"])
+    cal.add_argument("--file", default=None, help="JSON file to import")
+    cal.add_argument("--url", default=None, help="feed URL you have chosen; there is no default")
+    cal.add_argument("--symbol", default="EURUSD")
+    cal.add_argument("--hours", type=int, default=48)
+    cal.add_argument("--db", default="data/calendar.db")
+    cal.set_defaults(fn=cmd_calendar)
 
     sv = sub.add_parser("serve", help="run the trading loop plus the local API the UI talks to")
     sv.add_argument("--symbol", default="EURUSD")
