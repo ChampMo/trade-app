@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from tradeapp.broker.servertime import server_to_utc, utc_to_server
 from tradeapp.context import Context
@@ -39,10 +40,28 @@ DAY_START_EQUITY = "day_start_equity"
 DAY_KEY = "day_key"
 
 
+class Market(NamedTuple):
+    """One symbol on one timeframe. The unit the loop actually works in.
+
+    A strategy declares which of these it trades; the loop builds one context per market and runs
+    the same steps in each. Two strategies on the same symbol but different timeframes are two
+    markets, which is why `ema_cross` (H4) and `meanrev_m15` (M15) can now run side by side
+    instead of one of them being silently skipped every bar.
+    """
+
+    symbol: str
+    timeframe: TF
+
+    def __str__(self) -> str:
+        return f"{self.symbol} {self.timeframe.value}"
+
+
 @dataclass
 class CoreConfig:
     symbol: str = "EURUSD"
     timeframe: TF = TF.H4
+    # Empty means "just the symbol/timeframe above", which is what a backtest replays.
+    markets: tuple[Market, ...] = ()
     history_bars: int = 300
     reconcile_every_s: float = 60.0
     # Keeping the stored bars current, so a backtest run tomorrow covers up to yesterday and the
@@ -50,6 +69,11 @@ class CoreConfig:
     # its bars are invented and have no business in the history the research reads.
     sync_history_every_s: float = 0.0
     sync_history_bars: int = 5000
+
+    @property
+    def market_list(self) -> tuple[Market, ...]:
+        return self.markets or (Market(self.symbol, self.timeframe),)
+
     tick_interval_s: float = 5.0
     calendar_db: str = "data/calendar.db"
 
@@ -122,7 +146,9 @@ class Core:
         self._peak_equity: float = 0.0
         self._day_start_equity: float = 0.0
         self._day_key: str | None = None
-        self.last_bar_utc: datetime | None = None
+        # One per market: a new H4 bar and a new M15 bar are different events, and remembering
+        # only the latest would let one timeframe swallow the other's turn.
+        self._last_bars: dict[Market, datetime] = {}
         self.last_reconcile_at: datetime | None = None
         self.last_history_sync_at: datetime | None = None
         self.started = False
@@ -240,39 +266,54 @@ class Core:
         if self._history_due(now):
             self._sync_history(now, report)
 
-        # 4. is there a new closed bar to act on
-        ctx = self._context(now)
+        # 4. every market gets the same steps: a new bar, its open positions, then its signals.
+        # The account-wide work above happens once; this part happens per market, and one market
+        # failing to produce bars never stops the others.
+        symbols = self._symbol_infos()
+        for market in self.config.market_list:
+            self._trade_market(market, now, report, symbols)
+        return report
+
+    # --- one market ----------------------------------------------------------------
+
+    def _trade_market(self, market: Market, now: datetime, report: TickReport, symbols: dict) -> None:
+        ctx = self._context(market, now)
         if ctx is None or not ctx.bars:
-            report.note("no bars available")
-            return report
-        if self.last_bar_utc is not None and ctx.bar.time_utc <= self.last_bar_utc:
-            return report  # same bar as last time; strategies decide once per closed bar
-        self.last_bar_utc = ctx.bar.time_utc
+            report.note(f"{market}: no bars available")
+            return
+        seen = self._last_bars.get(market)
+        if seen is not None and ctx.bar.time_utc <= seen:
+            return  # same bar as last time; strategies decide once per closed bar
+        self._last_bars[market] = ctx.bar.time_utc
         report.new_bar = True
+        symbols = {**symbols, market.symbol: ctx.symbol_info}
 
         # 4b. look after what is already open before opening anything else. Exits are where a
         # 1:2 system with a 29% win rate makes or loses its money, and a stop that has been
         # tightened is the cheapest protection there is.
-        report.stops_moved = self._manage_open_positions(ctx, report)
+        report.stops_moved += self._manage_open_positions(ctx, report)
 
         # A new closed bar is exactly when a fresh view is worth paying for, and the only moment
         # it can change anything. Refreshing on a wall clock would spend the budget on bars that
-        # nobody is going to trade.
-        if self.analyst is not None:
+        # nobody is going to trade. Only the first market asks: the analyst returns one view of
+        # conditions, not one per chart, and asking once per market would multiply the bill for
+        # the same answer.
+        if self.analyst is not None and market == self.config.market_list[0]:
             outcome = self.analyst.refresh(ctx)
             if not outcome.used_model:
                 report.note(f"ai: {outcome.detail}")
+        if self.analyst is not None:
             ctx = replace(ctx, ai=self.analyst.view)
 
         # 5. strategies -> risk engine -> broker
         signals = self.runtime.on_bar(ctx)
-        report.signals = len(signals)
+        report.signals += len(signals)
         if not signals:
-            return report
+            return
 
         risk_ctx = RiskContext(
             account=self.account,
-            symbols={self.config.symbol: ctx.symbol_info},
+            symbols=symbols,
             tick=ctx.tick,
             positions=self.positions,
             now_utc=now,
@@ -280,7 +321,7 @@ class Core:
             peak_equity=self.peak_equity,
             state=self.kill.state,
             ai=ctx.ai,
-            strategy_day_pnl=self._strategy_day_pnl(now, ctx.symbol_info),
+            strategy_day_pnl=self._strategy_day_pnl(now, symbols),
         )
         for signal in signals:
             decision = self.engine.evaluate(signal.intent, signal.key, risk_ctx, variant=signal.variant)
@@ -302,10 +343,9 @@ class Core:
                     self.positions = self.broker.positions()
                 except Exception as e:  # noqa: BLE001
                     self.journal.event("WARN", SOURCE, "could not re-read positions after a fill", {"error": str(e)})
-                    return report
+                    return
             else:
                 report.note(f"{signal.key}: execution failed, {result.detail}")
-        return report
 
     def _manage_open_positions(self, ctx: Context, report: TickReport) -> int:
         """Ask each strategy about its own open positions, once per closed bar.
@@ -357,6 +397,15 @@ class Core:
             **self.reconciler.health_inputs(),
         )
 
+    def forget_last_bars(self) -> None:
+        """Treat the next bar on every market as new. For tests, and for a changed market list."""
+        self._last_bars.clear()
+
+    @property
+    def last_bar_utc(self) -> datetime | None:
+        """The most recent closed bar seen on any market, for the status line."""
+        return max(self._last_bars.values()) if self._last_bars else None
+
     @property
     def peak_equity(self) -> float:
         return self._peak_equity
@@ -400,20 +449,18 @@ class Core:
         midnight = utc_to_server(now, minutes).replace(hour=0, minute=0, second=0, microsecond=0)
         return server_to_utc(midnight, minutes)
 
-    def _strategy_day_pnl(self, now: datetime, symbol_info) -> dict[str, float]:
+    def _strategy_day_pnl(self, now: datetime, symbols: dict) -> dict[str, float]:
         """What each strategy has actually made or lost today, for its own daily budget.
 
         Read at the only moment it can matter — a bar with signals on it — rather than every tick,
         because it is a query over the journal and most ticks have nothing to decide.
         """
-        if symbol_info is None:
+        if not symbols:
             return {}
         try:
             from tradeapp.reports import realized_pnl_by_strategy
 
-            return realized_pnl_by_strategy(
-                self.journal, self._day_start_utc(now), now, {self.config.symbol: symbol_info}
-            )
+            return realized_pnl_by_strategy(self.journal, self._day_start_utc(now), now, symbols)
         except Exception as e:  # noqa: BLE001 - a missing budget number must not stop trading
             self.journal.event("WARN", SOURCE, "could not read today's PnL by strategy", {"error": str(e)})
             return {}
@@ -429,6 +476,23 @@ class Core:
         self.reconciler.run()
         self.last_reconcile_at = self._now()
 
+    def _symbol_infos(self) -> dict:
+        """Symbol info for every market, not just the one being decided.
+
+        Open risk and currency netting are computed from *all* open positions, so a position on a
+        symbol whose info is missing would silently count as no risk at all. One dict, built once
+        a tick, and a symbol the broker cannot describe is simply left out and reported.
+        """
+        out = {}
+        for market in self.config.market_list:
+            if market.symbol in out:
+                continue
+            try:
+                out[market.symbol] = self.broker.symbol_info(market.symbol)
+            except Exception as e:  # noqa: BLE001 - one unknown symbol must not stop the others
+                self.journal.event("WARN", SOURCE, "no symbol info", {"symbol": market.symbol, "error": str(e)})
+        return out
+
     def _history_due(self, now: datetime) -> bool:
         if self.history is None or self.config.sync_history_every_s <= 0:
             return False
@@ -440,37 +504,40 @@ class Core:
         """Pull recent bars into the store. Never raises: stale history is a research problem,
         not a trading one, and it must not be able to stop the loop."""
         self.last_history_sync_at = now
-        try:
-            result = self.history.sync_from_broker(
-                self.broker, self.config.symbol, self.config.timeframe, count=self.config.sync_history_bars
-            )
-        except Exception as e:  # noqa: BLE001 - the loop keeps trading on yesterday's history
-            self.journal.event("WARN", SOURCE, "could not sync history", {"error": str(e)})
-            report.note(f"history sync failed: {e}")
-            return
-        if result.stored:
-            self.journal.event(
-                "INFO",
-                SOURCE,
-                f"history synced: {result.stored} new bar(s) for {self.config.symbol} {self.config.timeframe.value}",
-                {"stored": result.stored, "total": result.total},
-            )
-        report.note(f"history: {result.stored} new bar(s), {result.total} stored")
+        for market in self.config.market_list:
+            try:
+                result = self.history.sync_from_broker(
+                    self.broker, market.symbol, market.timeframe, count=self.config.sync_history_bars
+                )
+            except Exception as e:  # noqa: BLE001 - the loop keeps trading on yesterday's history
+                self.journal.event("WARN", SOURCE, "could not sync history", {"market": str(market), "error": str(e)})
+                report.note(f"history sync failed for {market}: {e}")
+                continue
+            if result.stored:
+                self.journal.event(
+                    "INFO",
+                    SOURCE,
+                    f"history synced: {result.stored} new bar(s) for {market}",
+                    {"stored": result.stored, "total": result.total},
+                )
+            report.note(f"history {market}: {result.stored} new bar(s), {result.total} stored")
 
-    def _context(self, now: datetime) -> Context | None:
+    def _context(self, market: Market, now: datetime) -> Context | None:
         try:
-            bars = self.broker.bars(self.config.symbol, self.config.timeframe, self.config.history_bars)
+            bars = self.broker.bars(market.symbol, market.timeframe, self.config.history_bars)
             return Context(
-                symbol=self.config.symbol,
-                timeframe=self.config.timeframe,
+                symbol=market.symbol,
+                timeframe=market.timeframe,
                 bars=bars,
                 now_utc=now,
-                tick=self.broker.tick(self.config.symbol),
-                symbol_info=self.broker.symbol_info(self.config.symbol),
+                tick=self.broker.tick(market.symbol),
+                symbol_info=self.broker.symbol_info(market.symbol),
                 ai=self.analyst.view if self.analyst is not None else AIContext.neutral(),
             )
         except Exception as e:  # noqa: BLE001
-            self.journal.event("WARN", SOURCE, "could not build a context this tick", {"error": str(e)})
+            self.journal.event(
+                "WARN", SOURCE, "could not build a context this tick", {"market": str(market), "error": str(e)}
+            )
             return None
 
     def status(self) -> dict:
@@ -483,6 +550,14 @@ class Core:
             "peak_equity": self.peak_equity,
             "open_positions": len(self.positions),
             "last_bar_utc": self.last_bar_utc.isoformat() if self.last_bar_utc else None,
+            "markets": [
+                {
+                    "symbol": m.symbol,
+                    "timeframe": m.timeframe.value,
+                    "last_bar_utc": self._last_bars[m].isoformat() if m in self._last_bars else None,
+                }
+                for m in self.config.market_list
+            ],
             "consecutive_rejects": self.executor.consecutive_rejects,
             # The watchdog's two numbers. Silence is what the kill switch counts, and a climbing
             # reconnect count is a terminal that needs looking at even while nothing has tripped.

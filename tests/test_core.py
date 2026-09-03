@@ -214,7 +214,7 @@ def test_the_freeze_lifts_once_the_account_agrees_again(journal: Journal):
 
     core.kill.unlock("investigated: an order timed out and had filled")
     core.kill.resume()
-    core.last_bar_utc = None
+    core.forget_last_bars()
 
     report = core.tick()
     assert report.frozen is False and report.sent == 1
@@ -278,7 +278,7 @@ def test_the_full_kill_unlock_resume_cycle(journal: Journal):
     core.kill.resume()
     assert core.kill.state is EngineState.RUNNING
 
-    core.last_bar_utc = None  # a fresh bar arrives
+    core.forget_last_bars()  # a fresh bar arrives
     assert core.tick().sent == 1
 
 

@@ -56,7 +56,7 @@ def test_the_first_healthy_tick_fills_an_empty_store(journal: Journal, tmp_path)
     report = core.tick()
 
     assert store.count("EURUSD", TF.H4) > 0
-    assert any("history:" in n for n in report.notes)
+    assert any("history " in n for n in report.notes)
 
 
 def test_it_does_not_run_again_until_its_timer_is_up(journal: Journal, tmp_path):
@@ -67,10 +67,10 @@ def test_it_does_not_run_again_until_its_timer_is_up(journal: Journal, tmp_path)
     core.tick()
 
     clock.advance(minutes=30)
-    assert not any("history:" in n for n in core.tick().notes)
+    assert not any("history " in n for n in core.tick().notes)
 
     clock.advance(minutes=31)
-    assert any("history:" in n for n in core.tick().notes)
+    assert any("history " in n for n in core.tick().notes)
 
 
 def test_a_broker_that_cannot_answer_does_not_stop_the_loop(journal: Journal, tmp_path):
@@ -117,4 +117,4 @@ def test_no_store_means_no_sync(journal: Journal):
     core.start()
 
     assert core._history_due(datetime.now(UTC)) is False
-    assert not any("history:" in n for n in core.tick().notes)
+    assert not any("history " in n for n in core.tick().notes)

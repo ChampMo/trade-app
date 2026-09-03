@@ -57,6 +57,7 @@ class FakeBroker:
     _next_ticket: int = 500_001
     open_failures: int = 0
     _bars: list = field(default_factory=list)
+    _market_bars: dict = field(default_factory=dict)
     close_failures: int = 0
     sent: list[dict] = field(default_factory=list)
     closed: list[Position] = field(default_factory=list)
@@ -128,11 +129,18 @@ class FakeBroker:
             server_utc_offset_min=self.server_offset_min,
         )
 
-    def seed_bars(self, bars: list[Bar]) -> None:
-        self._bars = list(bars)
+    def seed_bars(self, bars: list[Bar], symbol: str | None = None, timeframe: TF | None = None) -> None:
+        """Seed every market, or one of them when a test needs two markets to differ."""
+        if symbol is None and timeframe is None:
+            self._bars = list(bars)
+        else:
+            self._market_bars[(symbol, timeframe)] = list(bars)
 
     def bars(self, symbol: str, timeframe: TF, count: int = 300, include_forming: bool = False) -> list[Bar]:
         self._require()
+        seeded = self._market_bars.get((symbol, timeframe))
+        if seeded is not None:
+            return seeded[-count:]
         if self._bars:
             return self._bars[-count:]
         # Deterministic gentle uptrend, enough history for the usual indicator periods.

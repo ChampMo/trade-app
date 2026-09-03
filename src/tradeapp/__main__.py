@@ -243,13 +243,17 @@ def cmd_data(args: argparse.Namespace) -> int:
                 print(f"           gap {gap}")
         return 0
 
-    tf = TF(args.tf.upper())
+    symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
+    timeframes = [TF(t.strip().upper()) for t in args.tf.split(",") if t.strip()]
     broker = _mt5_broker(settings)
     broker.connect()
-    report = store.sync_from_broker(broker, args.symbol, tf, count=args.count)
+    for symbol in symbols:
+        for timeframe in timeframes:
+            print(store.sync_from_broker(broker, symbol, timeframe, count=args.count))
     broker.disconnect()
-    print(report)
-    gaps = store.gaps(args.symbol, tf)
+
+    tf = timeframes[0]
+    gaps = store.gaps(symbols[0], tf)
     print(f"gaps      {len(gaps)} (weekends excluded)")
     for gap in gaps[: args.show_gaps]:
         print(f"          {gap}")
@@ -631,6 +635,30 @@ def cmd_calendar(args: argparse.Namespace) -> int:
     return 0
 
 
+def _markets_for(runtime, symbols: str | None, timeframe) -> tuple:
+    """What to actually trade: whatever the registered strategies declare, narrowed by the flags.
+
+    Derived from the strategies rather than from a flag, because a strategy knows which symbols it
+    was written and tested for. `--symbol` and `--tf` can narrow that set; neither can widen it,
+    so nothing ever runs on a market its author never declared.
+    """
+    from tradeapp.core import Market
+
+    wanted = {s.strip().upper() for s in (symbols or "").split(",") if s.strip()}
+    found = set()
+    for slot in runtime.slots:
+        for symbol in getattr(slot.strategy, "symbols", []):
+            tf = getattr(slot.strategy, "timeframe", None)
+            if tf is None:
+                continue
+            if wanted and symbol.upper() not in wanted:
+                continue
+            if timeframe is not None and tf != timeframe:
+                continue
+            found.add(Market(symbol, tf))
+    return tuple(sorted(found, key=lambda m: (m.symbol, m.timeframe.value)))
+
+
 def _register_allowed(runtime, wanted, settings, journal, *, fake: bool) -> list[str]:
     """Register only what its lifecycle stage allows to trade here (D26).
 
@@ -680,7 +708,7 @@ def _build_core(settings, args, journal):
     from tradeapp.runtime import StrategyRuntime
     from tradeapp.strategies import discover
 
-    tf = TF(args.tf.upper())
+    tf = TF(args.tf.upper()) if args.tf else None
     if args.fake:
         from tradeapp.broker.fake import FakeBroker
 
@@ -708,13 +736,18 @@ def _build_core(settings, args, journal):
 
         history = BarStore(settings.history_path)
 
+    markets = _markets_for(runtime, args.symbol, tf)
+    if not markets:
+        raise SystemExit("no market to trade: the registered strategies declare none that match --symbol/--tf")
+
     core = Core(
         broker,
         journal,
         runtime=runtime,
         config=CoreConfig(
-            symbol=args.symbol,
-            timeframe=tf,
+            symbol=markets[0].symbol,
+            timeframe=markets[0].timeframe,
+            markets=markets,
             tick_interval_s=args.interval,
             reconcile_every_s=args.reconcile_every,
             sync_history_every_s=0.0 if args.fake else float(getattr(args, "sync_history", 0) or 0) * 3600,
@@ -750,7 +783,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     port = args.port or settings.port
     print(f"config    profile={settings.profile.value} journal={journal.path} live_enabled={settings.live_enabled}")
     print(f"mode      {mode}")
-    print(f"strategies {', '.join(ids)} on {args.symbol} {tf.value}")
+    print(f"strategies {', '.join(ids)}")
+    print(f"markets    {', '.join(str(m) for m in core.config.market_list)}")
     try:
         acct = service.core.broker.connect()
         service.core.broker.disconnect()
@@ -1018,8 +1052,8 @@ def main(argv: list[str] | None = None) -> int:
 
     dt = sub.add_parser("data", help="sync and inspect the local history store")
     dt.add_argument("action", choices=["sync", "info"])
-    dt.add_argument("--symbol", default="EURUSD")
-    dt.add_argument("--tf", default="H4")
+    dt.add_argument("--symbol", default="EURUSD", help="comma separated, e.g. EURUSD,GBPUSD")
+    dt.add_argument("--tf", default="H4", help="comma separated, e.g. H4,M15")
     dt.add_argument("--count", type=int, default=5000, help="bars to pull from MT5")
     dt.add_argument("--db", default="data/history.db")
     dt.add_argument("--show-gaps", type=int, default=5)
@@ -1098,8 +1132,12 @@ def main(argv: list[str] | None = None) -> int:
     cal.set_defaults(fn=cmd_calendar)
 
     sv = sub.add_parser("serve", help="run the trading loop plus the local API the UI talks to")
-    sv.add_argument("--symbol", default="EURUSD")
-    sv.add_argument("--tf", default="H4")
+    sv.add_argument(
+        "--symbol",
+        default=None,
+        help="comma separated; narrows what the strategies declare. Default: all of it",
+    )
+    sv.add_argument("--tf", default=None, help="narrow to one timeframe; default is every one declared")
     sv.add_argument("--strategy", default=None)
     sv.add_argument("--interval", type=float, default=5.0)
     sv.add_argument("--reconcile-every", type=float, default=60.0)
@@ -1120,8 +1158,12 @@ def main(argv: list[str] | None = None) -> int:
     sv.set_defaults(fn=cmd_serve)
 
     rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
-    rn.add_argument("--symbol", default="EURUSD")
-    rn.add_argument("--tf", default="H4")
+    rn.add_argument(
+        "--symbol",
+        default=None,
+        help="comma separated; narrows what the strategies declare. Default: all of it",
+    )
+    rn.add_argument("--tf", default=None, help="narrow to one timeframe; default is every one declared")
     rn.add_argument("--strategy", default=None)
     rn.add_argument("--interval", type=float, default=5.0, help="seconds between ticks")
     rn.add_argument("--reconcile-every", type=float, default=60.0)
