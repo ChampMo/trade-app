@@ -36,7 +36,18 @@ jobs:
       # build; neither needs the desktop shell, and installing it is the only part of this job
       # that depends on the network reaching a release server.
       - run: node -v && npm -v && pwd && ls -la
+      # Actions logs need a token to read, but annotations do not: on failure the message is
+      # re-emitted as one so it can be read from outside.
       - name: install
-        run: npm ci --ignore-scripts || { echo '--- npm debug log ---'; tail -n 60 "$HOME/.npm/_logs/"*.log; exit 1; }
+        run: |
+          set +e
+          npm ci --ignore-scripts > install.log 2>&1
+          code=$?
+          cat install.log
+          if [ $code -ne 0 ]; then
+            echo "::error::$(tr '
+' '  ' < install.log | tail -c 900)"
+          fi
+          exit $code
       - run: npm test
       - run: npm run build
