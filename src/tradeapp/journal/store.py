@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from tradeapp.config import resolve_data_path
 from tradeapp.journal.models import (
     SCHEMA_VERSION,
     AICall,
@@ -41,7 +42,9 @@ class Journal:
             )
             self.path: Path | None = None
         else:
-            path = Path(db_path).resolve()
+            # The record must live in one place whatever directory the core was started from:
+            # peak equity lives here so a restart cannot erase the drawdown history (D21).
+            path = resolve_data_path(db_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             self.engine = create_engine(f"sqlite:///{path.as_posix()}", echo=echo)
             self.path = path

@@ -24,6 +24,26 @@ class Profile(StrEnum):
     LIVE = "live"  # real money
 
 
+# Where relative data paths resolve to. **Not** the current directory: the core is started from a
+# terminal, a .cmd file, Task Scheduler and occasionally from `ui/` by someone who was already
+# there, and a journal that follows the shell's cwd is a journal that silently splits in two.
+#
+# That is not untidiness, it is a safety bug. Peak equity and day-start equity live in the journal
+# precisely so a restart cannot erase the drawdown history (D21); a restart from another folder
+# would open an empty journal, reset the peak, and quietly measure the 30% limit against today's
+# balance instead of the real high-water mark.
+#
+# `parents[2]` is the repository root for an editable install (src/tradeapp/config.py). DATA_ROOT
+# overrides it for anything else.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_data_path(path: Path | str, root: Path | None = None) -> Path:
+    """Absolute already? Leave it. Relative? Anchor it to the project, never to the cwd."""
+    p = Path(path)
+    return p if p.is_absolute() else ((root or PROJECT_ROOT) / p).resolve()
+
+
 DEFAULT_PORTS: dict[Profile, int] = {
     Profile.DEMO: 8001,
     Profile.PAPER: 8001,  # paper is a mode of the demo core, not a second process
@@ -33,7 +53,10 @@ DEFAULT_PORTS: dict[Profile, int] = {
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # The project's own .env first, then one in the current directory if there is one. Reading
+        # only the cwd is how a core started from `ui/` ends up running on *default* settings with
+        # no MT5 path, no journal path and no credentials, while looking perfectly healthy.
+        env_file=(PROJECT_ROOT / ".env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -68,6 +91,9 @@ class Settings(BaseSettings):
 
     # --- journal ---
     journal_db: Path | None = Field(default=None, description="Defaults to data/journal-<profile>.db")
+    history_db: Path | None = Field(default=None, description="Stored bars; defaults to data/history.db")
+    calendar_db: Path | None = Field(default=None, description="Economic calendar; defaults to data/calendar.db")
+    data_dir: Path | None = Field(default=None, description="Anchor for relative paths; defaults to the project root")
 
     # --- identity ---
     magic_base: int = 100_000
@@ -105,9 +131,22 @@ class Settings(BaseSettings):
         return self.api_port or DEFAULT_PORTS[self.profile]
 
     @property
+    def data_root(self) -> Path:
+        return resolve_data_path(self.data_dir) if self.data_dir else PROJECT_ROOT
+
+    @property
     def journal_path(self) -> Path:
         """Each profile keeps its own record; a demo fill must never sit in the live history."""
-        return self.journal_db or Path(f"data/journal-{self.profile.value}.db")
+        return resolve_data_path(self.journal_db or Path(f"data/journal-{self.profile.value}.db"), self.data_root)
+
+    @property
+    def history_path(self) -> Path:
+        """Stored bars. Same rule: the backtest must find them wherever the core was started."""
+        return resolve_data_path(self.history_db or Path("data/history.db"), self.data_root)
+
+    @property
+    def calendar_path(self) -> Path:
+        return resolve_data_path(self.calendar_db or Path("data/calendar.db"), self.data_root)
 
     @property
     def simulated_journal_path(self) -> Path:

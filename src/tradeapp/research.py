@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from tradeapp.config import resolve_data_path
+
 SOURCE = "research"
 MAX_MONTE_CARLO = 5_000
 
@@ -48,7 +50,7 @@ class BacktestRunner:
 
     def __init__(self, journal_path: str, history_db: str = "data/history.db") -> None:
         self.journal_path = journal_path
-        self.history_db = history_db
+        self.history_db = str(resolve_data_path(history_db))
         self._lock = threading.Lock()
         self._jobs: dict[int, BacktestJob] = {}
         self._next_id = 1

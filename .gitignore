@@ -14,10 +14,17 @@ dist/
 .ruff_cache/
 
 # runtime data: journal, history cache, logs
+# `data/*` only matches the one at the root. A journal written anywhere else — a core started from
+# ui/ used to create ui/data/ — must never be committable: it holds account numbers and fills, and
+# this repository is public.
 data/*
 !data/.gitkeep
+**/data/*.db
+**/data/*.db-wal
+**/data/*.db-shm
 logs/*
 !logs/.gitkeep
+**/logs/*.log
 reports/*
 !reports/.gitkeep
 

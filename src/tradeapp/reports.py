@@ -27,6 +27,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from tradeapp.config import resolve_data_path
 from tradeapp.contracts import SymbolInfo
 from tradeapp.journal import Journal
 from tradeapp.journal.models import AICall, Decision, Order
@@ -287,7 +288,7 @@ def render(report: DayReport) -> str:
 
 
 def write(report: DayReport, directory: str | Path = "reports") -> Path:
-    path = Path(directory)
+    path = resolve_data_path(directory)
     path.mkdir(parents=True, exist_ok=True)
     target = path / f"postmortem-{report.day}.md"
     target.write_text(render(report), encoding="utf-8")
@@ -597,7 +598,7 @@ def render_drift(report: DriftReport) -> str:
 
 
 def write_drift(report: DriftReport, directory: str | Path = "reports") -> Path:
-    path = Path(directory)
+    path = resolve_data_path(directory)
     path.mkdir(parents=True, exist_ok=True)
     target = path / f"drift-{report.strategy}-{report.generated_utc:%Y-%m-%d}.md"
     target.write_text(render_drift(report), encoding="utf-8")

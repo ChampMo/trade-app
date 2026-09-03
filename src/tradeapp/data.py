@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from tradeapp.config import resolve_data_path
 from tradeapp.contracts import TF, Bar
 
 SCHEMA = """
@@ -76,6 +77,9 @@ def _from_epoch(seconds: int) -> datetime:
 
 class BarStore:
     def __init__(self, path: str | Path = "data/history.db") -> None:
+        # Anchored to the project, never to the shell's cwd: a core started from ui/ once
+        # looked healthy while finding no bars at all.
+        path = resolve_data_path(path)
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as con:

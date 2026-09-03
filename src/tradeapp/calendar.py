@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
+from tradeapp.config import resolve_data_path
 from tradeapp.risk.sizing import split_pair
 
 SCHEMA = """
@@ -78,6 +79,7 @@ def _epoch(moment: datetime) -> int:
 
 class CalendarStore:
     def __init__(self, path: str | Path = "data/calendar.db") -> None:
+        path = resolve_data_path(path)
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as con:
