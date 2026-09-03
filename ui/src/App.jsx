@@ -6,10 +6,14 @@ import Dashboard from "./pages/Dashboard";
 import Strategies from "./pages/Strategies";
 import Journal from "./pages/Journal";
 import Events from "./pages/Events";
+import Research from "./pages/Research";
+import Risk from "./pages/Risk";
 
 const PAGES = [
   { id: "dashboard", label: "Dashboard", Component: Dashboard },
   { id: "strategies", label: "Strategies", Component: Strategies },
+  { id: "research", label: "Research", Component: Research },
+  { id: "risk", label: "Risk", Component: Risk },
   { id: "journal", label: "Journal", Component: Journal },
   { id: "events", label: "Events", Component: Events },
 ];

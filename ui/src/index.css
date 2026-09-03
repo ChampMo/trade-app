@@ -27,6 +27,9 @@
   .stat-v {
     @apply text-[15px] font-bold leading-tight whitespace-nowrap font-mono;
   }
+  .input {
+    @apply border-[1.5px] border-ink rounded px-2 py-1 text-xs bg-surface w-full;
+  }
   .th {
     @apply text-left text-[10px] uppercase tracking-wider text-muted font-bold border-b-[1.5px] border-ink px-2 py-1 whitespace-nowrap;
   }

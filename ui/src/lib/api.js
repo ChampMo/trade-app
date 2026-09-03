@@ -30,6 +30,17 @@ export const api = {
   strategies: () => request("/strategies"),
   ticks: () => request("/ticks"),
 
+  // Research is read-mostly: everything below reads, except startBacktest, which starts a job on
+  // the core's own worker thread and answers immediately with something to poll.
+  riskLimits: () => request("/risk/limits"),
+  runs: (limit = 25, strategy) =>
+    request(`/backtest/runs?limit=${limit}${strategy ? `&strategy=${encodeURIComponent(strategy)}` : ""}`),
+  run: (id) => request(`/backtest/runs/${id}`),
+  drift: (id, days = 30) => request(`/backtest/runs/${id}/drift?days=${days}`),
+  jobs: () => request("/backtest/jobs"),
+  job: (id) => request(`/backtest/jobs/${id}`),
+  startBacktest: (body) => request("/backtest", { method: "POST", body: JSON.stringify(body) }),
+
   kill: (reason) => request("/control/kill", { method: "POST", body: JSON.stringify({ reason }) }),
   unlock: (reason) => request("/control/unlock", { method: "POST", body: JSON.stringify({ reason }) }),
   pause: (reason) => request("/control/pause", { method: "POST", body: JSON.stringify({ reason }) }),

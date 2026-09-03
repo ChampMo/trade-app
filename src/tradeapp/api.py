@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+from datetime import UTC
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from tradeapp.journal import Journal
 from tradeapp.lifecycle import Lifecycle
+from tradeapp.research import BacktestRunner, limits_dict, run_dict
 from tradeapp.service import CoreService
 
 
@@ -27,10 +29,38 @@ class ReasonBody(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class BacktestBody(BaseModel):
+    """What the Research page may ask for. Bounded on purpose: this endpoint starts real work."""
+
+    strategy: str = Field(default="ema_cross", max_length=32)
+    symbol: str = Field(default="EURUSD", max_length=16)
+    timeframe: str = Field(default="H4", max_length=4)
+    balance: float = Field(default=10_000.0, gt=0, le=10_000_000)
+    warmup: int = Field(default=100, ge=10, le=1000)
+    spread_points: int = Field(default=20, ge=0, le=500)
+    use_bar_spread: bool = True
+    slippage_points: float = Field(default=0.3, ge=0, le=100)
+    commission: float = Field(default=0.0, ge=0, le=100)
+    monte_carlo: int = Field(default=1000, ge=0, le=5000)
+    label: str = Field(default="", max_length=64)
+
+
+def _iso(dt) -> str | None:
+    """Journal rows are naive UTC (D13). Say so in the wire format.
+
+    Without the offset a browser reads `2026-09-03T03:48:10` as local time and every timestamp in
+    the UI silently shifts by the machine's zone — seven hours, in Bangkok, under a column headed
+    UTC. The journal is the record; it must not need a reader's timezone to be read correctly.
+    """
+    if dt is None:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).isoformat()
+
+
 def _event_dict(e) -> dict:
     return {
         "id": e.id,
-        "ts_utc": e.ts_utc.isoformat(),
+        "ts_utc": _iso(e.ts_utc),
         "severity": e.severity,
         "source": e.source,
         "message": e.message,
@@ -41,7 +71,7 @@ def _event_dict(e) -> dict:
 def _decision_dict(d) -> dict:
     return {
         "id": d.id,
-        "ts_utc": d.ts_utc.isoformat(),
+        "ts_utc": _iso(d.ts_utc),
         "strategy_id": d.strategy_id,
         "variant": d.variant,
         "symbol": d.symbol,
@@ -68,7 +98,7 @@ def _decision_dict(d) -> dict:
 def _order_dict(o) -> dict:
     return {
         "id": o.id,
-        "ts_utc": o.ts_utc.isoformat(),
+        "ts_utc": _iso(o.ts_utc),
         "client_ref": o.client_ref,
         "kind": o.kind,
         "symbol": o.symbol,
@@ -86,9 +116,16 @@ def _order_dict(o) -> dict:
     }
 
 
-def create_app(service: CoreService, journal: Journal | None = None) -> FastAPI:
+def create_app(
+    service: CoreService,
+    journal: Journal | None = None,
+    runner: BacktestRunner | None = None,
+) -> FastAPI:
     journal = journal or service.core.journal
     lifecycle = Lifecycle(journal)
+    # Research runs on its own thread and its own journal handle; it can read history and write a
+    # result row, and it has no route to the broker at all.
+    runner = runner or BacktestRunner(str(journal.path) if journal.path else ":memory:")
     app = FastAPI(title="trade-app core", version="0.1", docs_url="/docs")
 
     @app.exception_handler(RuntimeError)
@@ -136,6 +173,70 @@ def create_app(service: CoreService, journal: Journal | None = None) -> FastAPI:
     @app.get("/ticks")
     def ticks() -> list[dict]:
         return service.recent_ticks()
+
+    # --- research (P2-07) -----------------------------------------------------------
+
+    @app.get("/risk/limits")
+    def risk_limits() -> dict:
+        """Read-only. A limit is a decision (D3, CLAUDE.md rule 7), not a slider."""
+        return {
+            "state": service.engine_state.value,
+            "editable": False,
+            "why_not": "limits are decisions recorded in DECISIONS.md; changing one is an edit and a commit",
+            "limits": limits_dict(service.core.limits),
+        }
+
+    @app.get("/backtest/runs")
+    def backtest_runs(limit: int = 25, strategy: str | None = None) -> list[dict]:
+        return [run_dict(r) for r in journal.backtest_runs(min(limit, 200), strategy)]
+
+    @app.get("/backtest/runs/{run_id}")
+    def backtest_run(run_id: int) -> dict:
+        run = journal.backtest_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"no backtest run #{run_id}")
+        return {**run_dict(run), "trades": run.trades or []}
+
+    @app.get("/backtest/runs/{run_id}/drift")
+    def backtest_drift(run_id: int, days: int = 30, point: float = 0.00001) -> dict:
+        from tradeapp import reports
+
+        try:
+            report = reports.build_drift(journal, run_id, days=min(days, 365), point=point)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {
+            "run_id": report.run_id,
+            "strategy": report.strategy,
+            "days": report.days,
+            "live_trades": report.live_trades,
+            "backtest_trades": report.backtest_trades,
+            "meaningful": report.meaningful,
+            "live_slippage": report.live_slippage,
+            "metrics": [
+                {"name": m.name, "backtest": m.backtest, "live": m.live, "gap": m.gap, "worse": m.worse, "note": m.note}
+                for m in report.metrics
+            ],
+            "diverging": [m.name for m in report.diverging],
+            "notes": report.notes,
+            "markdown": reports.render_drift(report),
+        }
+
+    @app.get("/backtest/jobs")
+    def backtest_jobs(limit: int = 20) -> dict:
+        return {"busy": runner.busy, "jobs": [j.as_dict() for j in runner.jobs(min(limit, 100))]}
+
+    @app.get("/backtest/jobs/{job_id}")
+    def backtest_job(job_id: int) -> dict:
+        job = runner.job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"no backtest job #{job_id}")
+        return job.as_dict()
+
+    @app.post("/backtest")
+    def start_backtest(body: BacktestBody) -> dict:
+        """Starts real work, so it answers immediately with a job to poll rather than blocking."""
+        return runner.start(body.model_dump()).as_dict()
 
     # --- control ------------------------------------------------------------------
 
