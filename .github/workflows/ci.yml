@@ -29,24 +29,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Match the version the project is developed on: npm 11 writes lock files that npm 10
+          # cannot install, which is exactly how this job stayed red for a day.
+          node-version: "24"
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      # --ignore-scripts skips Electron's ~100 MB binary download. CI runs vitest and a vite
-      # build; neither needs the desktop shell, and installing it is the only part of this job
-      # that depends on the network reaching a release server.
-      - run: node -v && npm -v && pwd && ls -la
-      # Actions logs need a token to read, but annotations do not: on failure the message is
-      # re-emitted as one so it can be read from outside.
-      - name: install
-        run: |
-          set +e
-          { echo "PWD=$(pwd)"; ls -la; echo "--- npm ci ---"; npm ci --ignore-scripts; } > install.log 2>&1
-          code=$?
-          cat install.log
-          if [ $code -ne 0 ]; then
-            echo "::error::$(tr -s "[:space:]" " " < install.log | head -c 900)"
-          fi
-          exit $code
+      # --ignore-scripts skips Electron's ~100 MB binary download: this job runs vitest and a
+      # vite build, and neither needs the desktop shell.
+      - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run build
