@@ -341,6 +341,49 @@ def _analyst(settings, journal, quiet: bool = True):
     return Analyst(client, journal, calendar=CalendarStore("data/calendar.db"))
 
 
+def _telegram(settings, journal, quiet: bool = True):
+    """Alerts and the phone kill switch. Missing credentials is a normal state, not a failure."""
+    from tradeapp.notify import TelegramNotifier
+
+    token = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+    if not (token and settings.telegram_chat_id):
+        if not quiet:
+            print("telegram  not configured; no alerts and no phone kill switch")
+        return None
+    if not quiet:
+        print(f"telegram  on, chat {settings.telegram_chat_id}")
+    return TelegramNotifier(token, settings.telegram_chat_id, journal)
+
+
+def cmd_notify(args: argparse.Namespace) -> int:
+    """Send one message so you can prove the channel works before you need it."""
+    settings = load_settings()
+    journal = Journal(settings.journal_path)
+    notifier = _telegram(settings, journal, quiet=False)
+    if notifier is None:
+        print("set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env first")
+        return 1
+    if args.action == "test":
+        text = args.text or "trade-app: test message. If you can read this, alerts work."
+        print("sending…")
+        ok = notifier.send(text)
+        print("sent" if ok else "FAILED — check the journal for why")
+        return 0 if ok else 1
+    if args.action == "status":
+        from tradeapp.notify import TelegramNotifier as TN
+
+        print("no core running is fine; this only proves the channel")
+        ok = notifier.send(TN.format_status({"state": "?", "service": {}}))
+        return 0 if ok else 1
+    if args.action == "poll":
+        commands = notifier.poll()
+        print(f"{len(commands)} command(s) waiting")
+        for c in commands:
+            print(f"  /{c.name}  {c.text!r}")
+        return 0
+    return 1
+
+
 def _news_blocker(db: str, quiet: bool = True):
     """A calendar with no events blocks nothing, so an empty store is not an error — but say so."""
     from tradeapp.calendar import CalendarStore, NewsWindows
@@ -424,6 +467,7 @@ def _build_core(settings, args, journal):
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
     analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
+    notifier = _telegram(settings, journal, quiet=False) if getattr(args, "telegram", False) else None
 
     core = Core(
         broker,
@@ -438,9 +482,10 @@ def _build_core(settings, args, journal):
         limits=RiskLimits(),
         news=news,
         analyst=analyst,
+        notifier=notifier,
         magic_base=settings.magic_base,
     )
-    return core, ids, tf
+    return core, ids, tf, notifier
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -450,8 +495,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     settings = load_settings()
     journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
-    core, ids, tf = _build_core(settings, args, journal)
-    service = CoreService(core)
+    core, ids, tf, notifier = _build_core(settings, args, journal)
+    bridge = None
+    if notifier is not None:
+        from tradeapp.notify import TelegramBridge
+
+        bridge = TelegramBridge(notifier, None)
+    service = CoreService(core, bridge=bridge)
+    if bridge is not None:
+        bridge.service = service  # the bridge answers /status and /kill through the service
 
     mode = "simulated broker" if args.fake else ("paper fills" if args.paper else "REAL orders")
     port = args.port or settings.port
@@ -575,6 +627,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
     analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
+    notifier = _telegram(settings, journal, quiet=False) if getattr(args, "telegram", False) else None
 
     core = Core(
         broker,
@@ -586,6 +639,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         limits=RiskLimits(),
         news=news,
         analyst=analyst,
+        notifier=notifier,
         magic_base=settings.magic_base,
     )
 
@@ -752,6 +806,11 @@ def main(argv: list[str] | None = None) -> int:
     lf.add_argument("--db", default="data/history.db")
     lf.set_defaults(fn=cmd_lifecycle)
 
+    nt = sub.add_parser("notify", help="prove the Telegram channel works before you need it")
+    nt.add_argument("action", choices=["test", "status", "poll"])
+    nt.add_argument("--text", default=None)
+    nt.set_defaults(fn=cmd_notify)
+
     cal = sub.add_parser("calendar", help="economic calendar: import, fetch, and see what will be blocked")
     cal.add_argument("action", choices=["show", "import", "fetch"])
     cal.add_argument("--file", default=None, help="JSON file to import")
@@ -770,6 +829,7 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=None, help="defaults to the profile's port")
     sv.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
+    sv.add_argument("--telegram", action="store_true", help="alerts, heartbeat and the phone kill switch")
     sv.add_argument("--ai", action="store_true", help="let the DeepSeek analyst set bias/size/block")
     sv.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     sv.add_argument("--fake", action="store_true", help="simulated broker, no MT5 at all")
@@ -782,6 +842,7 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--interval", type=float, default=5.0, help="seconds between ticks")
     rn.add_argument("--reconcile-every", type=float, default=60.0)
     rn.add_argument("--max-ticks", type=int, default=None)
+    rn.add_argument("--telegram", action="store_true", help="alerts, heartbeat and the phone kill switch")
     rn.add_argument("--ai", action="store_true", help="let the DeepSeek analyst set bias/size/block")
     rn.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     rn.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")

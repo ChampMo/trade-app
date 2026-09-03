@@ -34,8 +34,19 @@ class ServiceState:
 
 
 class CoreService:
-    def __init__(self, core: Core, *, tick_interval_s: float | None = None, keep_reports: int = 50) -> None:
+    def __init__(
+        self,
+        core: Core,
+        *,
+        tick_interval_s: float | None = None,
+        keep_reports: int = 50,
+        bridge=None,
+    ) -> None:
         self.core = core
+        # The Telegram bridge rides the same loop rather than getting a thread of its own: one
+        # fewer thing that can be alive while the loop is dead.
+        self.bridge = bridge
+        self._last_event_id = 0
         self.interval = tick_interval_s if tick_interval_s is not None else core.config.tick_interval_s
         self.keep_reports = keep_reports
         self.state = ServiceState()
@@ -51,6 +62,7 @@ class CoreService:
         with self._lock:
             self.core.start()
             self.state = ServiceState(running=True, started_utc=datetime.now(UTC))
+        self.start_notifications_from_now()
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="core-loop", daemon=True)
         self._thread.start()
@@ -71,6 +83,7 @@ class CoreService:
                 with self._lock:
                     report = self.core.tick()
                     self._record(report)
+                self._notify()
             except Exception as e:  # noqa: BLE001 - a loop that dies quietly is the worst outcome
                 # Record why first, then mark it stopped. The other order lets an observer see a
                 # dead loop with no explanation for it yet, which is exactly the wrong moment to
@@ -100,6 +113,28 @@ class CoreService:
             }
         )
         del self.state.recent[: -self.keep_reports]
+
+    def _notify(self) -> None:
+        """Push new journal events out and answer any commands. Never breaks the loop."""
+        if self.bridge is None:
+            return
+        try:
+            events = self.core.journal.events_since(self._last_event_id, 200)
+            if events:
+                self._last_event_id = events[-1].id
+            for event in events:
+                if event.severity == "CRIT":
+                    self.bridge.notifier.critical(f"{event.source}: {event.message}", event.data)
+                elif event.severity == "WARN":
+                    self.bridge.notifier.warn(f"{event.source}: {event.message}")
+            self.bridge.tick()
+        except Exception as e:  # noqa: BLE001 - alerting is never allowed to stop trading
+            self.core.journal.event("WARN", SOURCE, "notification pass failed", {"error": str(e)})
+
+    def start_notifications_from_now(self) -> None:
+        """Skip the backlog: a restart should not replay a week of warnings to a phone."""
+        recent = self.core.journal.tail_events(1)
+        self._last_event_id = recent[-1].id if recent else 0
 
     # --- the API's view -------------------------------------------------------------
 

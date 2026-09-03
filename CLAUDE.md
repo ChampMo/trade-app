@@ -29,6 +29,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic; `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection; `killswitch.py` is the emergency brake (rule 06, D12a) and is the one module allowed to close positions directly, never to open them. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
 - `src/tradeapp/backtest/` — the live system fed from a file. `broker.py` is a `Broker` made of history so the backtest drives the real Core/Risk/Executor; `costs.py` holds the measured XM numbers (D18); `stats.py` and `robustness.py` produce what the gates read. Never add a second decision path here — that is the whole point of the package.
 - `src/tradeapp/ai/` — the run-time AI layer. `schemas.py` is the safety story: four bounded numbers, validated strictly, and a bad shape keeps the previous view rather than retrying. `client.py` is one httpx POST with a journal-backed daily budget. `analyst.py` is the only agent whose output can change a trade, and its prompt carries **no account data**. Absent or out of budget is a normal state.
+- `src/tradeapp/notify.py` — Telegram. Outbound never raises; inbound trusts exactly one chat id. `/kill` works from a phone, `/unlock` deliberately does not.
 - `src/tradeapp/calendar.py` — economic calendar and news windows. **No LLM**: release times are known in advance, so this is a rule, not a prediction. Feeds in by file or by a URL the owner chose; there is deliberately no default.
 - `src/tradeapp/lifecycle.py` — D3's gates as code that refuses. No force parameter; a parameter change demotes to research.
 - `src/tradeapp/data.py` — SQLite bar store. Upsert by time, weekend-aware gap report.
@@ -82,6 +83,8 @@ python -m tradeapp backtest       # replay stored history through the live decis
 python -m tradeapp backtest --walk-forward
 python -m tradeapp calendar import --file week.json   # then: calendar show
 python -m tradeapp run --fake --ai                    # the loop with the analyst enabled
+python -m tradeapp notify test                        # prove alerts work before you need them
+python -m tradeapp serve --telegram --ai              # everything on
 python -m tradeapp journal --tail 30
 ```
 
