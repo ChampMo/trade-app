@@ -172,8 +172,12 @@ class Core:
         now = self._now()
         report = TickReport(at_utc=now, state=self.kill.state)
 
-        # 1. what does the broker say
+        # 1. is the terminal still there, and what does it say
         fresh = True
+        reconnect = getattr(self.broker, "ensure_connected", None)
+        if reconnect is not None and not reconnect():
+            fresh = False
+            report.note("terminal is not reachable; will retry next tick")
         try:
             self.account = self.broker.account()
             self.positions = self.broker.positions()
@@ -362,5 +366,11 @@ class Core:
             "open_positions": len(self.positions),
             "last_bar_utc": self.last_bar_utc.isoformat() if self.last_bar_utc else None,
             "consecutive_rejects": self.executor.consecutive_rejects,
+            # The watchdog's two numbers. Silence is what the kill switch counts, and a climbing
+            # reconnect count is a terminal that needs looking at even while nothing has tripped.
+            "last_broker_contact_utc": (
+                self.executor.last_broker_contact_utc.isoformat() if self.executor.last_broker_contact_utc else None
+            ),
+            "reconnects": getattr(self.broker, "reconnects", 0),
             "strategies": self.runtime.status(),
         }

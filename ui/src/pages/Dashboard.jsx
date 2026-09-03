@@ -58,9 +58,16 @@ export default function Dashboard({ status, live }) {
           </div>
           <div className="text-xs text-muted">kept in the journal, so a restart cannot erase them</div>
         </Card>
-        <Card title="Execution">
-          <Stat label="Rejects in a row" value={status?.consecutive_rejects ?? 0} />
-          <div className="text-xs text-muted">three in a row trips the kill switch</div>
+        <Card title="Execution & terminal">
+          <div className="flex gap-4">
+            <Stat label="Rejects in a row" value={status?.consecutive_rejects ?? 0} />
+            <Stat label="Reconnects" value={status?.reconnects ?? 0} />
+          </div>
+          <div className="text-xs text-muted">
+            three rejects in a row trips the kill switch; a dropped terminal is reconnected on its own
+            <br />
+            broker contact {bothClocks(status?.last_broker_contact_utc)}
+          </div>
         </Card>
       </div>
 

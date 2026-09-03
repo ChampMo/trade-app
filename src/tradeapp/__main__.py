@@ -12,10 +12,11 @@ from tradeapp.contracts import LiveAccountBlocked, Side
 from tradeapp.journal import Journal
 
 
-def _mt5_broker(settings):
+def _mt5_broker(settings, journal=None):
     from tradeapp.broker.mt5_bridge import MT5Broker
 
     return MT5Broker(
+        journal=journal,
         path=settings.mt5_path,
         login=settings.mt5_login,
         password=settings.mt5_password_plain,
@@ -77,8 +78,8 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         # into the record would poison every later report and post-mortem.
         journal = Journal(":memory:" if args.no_db else settings.simulated_journal_path)
     else:
-        broker = _mt5_broker(settings)
         journal = Journal(settings.journal_path)
+        broker = _mt5_broker(settings, journal)
     report = run_smoke(
         broker,
         journal,
@@ -485,7 +486,7 @@ def _build_core(settings, args, journal):
 
         broker = FakeBroker()
     else:
-        broker = _mt5_broker(settings)
+        broker = _mt5_broker(settings, journal)
     if getattr(args, "paper", False):
         from tradeapp.broker.paper import PaperBroker
 
@@ -648,8 +649,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         broker = FakeBroker()
         journal = Journal(settings.simulated_journal_path)
     else:
-        broker = _mt5_broker(settings)
         journal = Journal(settings.journal_path)
+        broker = _mt5_broker(settings, journal)
 
     runtime = StrategyRuntime(journal)
     ids = [args.strategy] if args.strategy else sorted(discover())
@@ -746,18 +747,21 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
 
 
 def cmd_drill(args: argparse.Namespace) -> int:
-    """Fire every kill-switch trigger on purpose and report what happened."""
-    from tradeapp.drill import run_drills
+    """Fire every kill-switch trigger on purpose, take the terminal away, and report what happened."""
+    from tradeapp.drill import run_drills, run_watchdog_drills
 
     settings = load_settings()
     journal = Journal(settings.simulated_journal_path)
-    results = run_drills(journal)
+    groups = [("kill switch", run_drills(journal)), ("watchdog", run_watchdog_drills(journal))]
+    results = [r for _, rs in groups for r in rs]
     width = max(len(r.name) for r in results)
-    for r in results:
-        print(f"  {'PASS' if r.passed else 'FAIL'}  {r.name:<{width}}  {r.got}")
+    for title, rs in groups:
+        print(f"{title}:")
+        for r in rs:
+            print(f"  {'PASS' if r.passed else 'FAIL'}  {r.name:<{width}}  {r.got}")
     passed = sum(1 for r in results if r.passed)
     print(f"\n{passed}/{len(results)} drills passed")
-    print("simulated broker only: pulling the network cable is P4-01 and gate 5 in DECISIONS D3")
+    print("simulated terminal only: killing terminal64.exe under a real `serve` is still an owner task")
     return 0 if passed == len(results) else 1
 
 
@@ -892,7 +896,7 @@ def main(argv: list[str] | None = None) -> int:
     rc = sub.add_parser("reconcile", help="compare broker positions against the journal")
     rc.set_defaults(fn=cmd_reconcile)
 
-    d = sub.add_parser("drill", help="fire every kill-switch trigger against a simulated broker")
+    d = sub.add_parser("drill", help="fire every kill-switch trigger and take the terminal away, against fakes")
     d.set_defaults(fn=cmd_drill)
 
     j = sub.add_parser("journal", help="print the last events")

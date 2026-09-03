@@ -16,17 +16,27 @@ class FakeMT5Module:
         server_offset_min: int = 180,
         tick: bool = True,
         last_error: tuple[int, str] = (-1, "fake error"),
+        init_sequence: list[bool] | None = None,
+        terminal_connected: bool = True,
     ):
         self._trade_mode = trade_mode
         self._init_ok = init_ok
         self._server_offset_min = server_offset_min
         self._has_tick = tick
         self._last_error = last_error
+        # Answers for successive initialize() calls, so a test can say "busy, then ready".
+        # Once exhausted, init_ok answers for the rest.
+        self._init_sequence = list(init_sequence or [])
+        self.terminal_connected = terminal_connected
         self.shutdown_calls = 0
+        self.initialize_calls = 0
         self.init_kwargs = None
 
     def initialize(self, **kwargs):
         self.init_kwargs = kwargs
+        self.initialize_calls += 1
+        if self._init_sequence:
+            return self._init_sequence.pop(0)
         return self._init_ok
 
     def shutdown(self):
@@ -47,7 +57,7 @@ class FakeMT5Module:
         )
 
     def terminal_info(self):
-        return SimpleNamespace(trade_allowed=True, connected=True)
+        return SimpleNamespace(trade_allowed=True, connected=self.terminal_connected)
 
     def symbol_info_tick(self, symbol):
         if not self._has_tick:

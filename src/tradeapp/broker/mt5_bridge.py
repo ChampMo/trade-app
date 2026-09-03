@@ -76,6 +76,9 @@ RETCODE_DESC: dict[int, str] = {
 }
 RETCODE_OK = (10009, 10010)  # DONE, DONE_PARTIAL
 RETCODE_RETRYABLE = (10004, 10020, 10021, 10024)  # requote, price changed, price off, too many requests
+# Only the "still starting up" case is worth retrying on connect. A wrong password will never
+# succeed on attempt two, and repeating it is how accounts get locked.
+RETRYABLE_INIT_ERRORS = (-10003, -10005)
 
 _TRADE_MODE = {0: AccountMode.DEMO, 1: AccountMode.CONTEST, 2: AccountMode.REAL}
 
@@ -135,6 +138,10 @@ class MT5Broker:
         allow_live: bool = False,
         timeout_ms: int = 60_000,
         reference_symbol: str = "EURUSD",
+        connect_attempts: int = 3,
+        connect_backoff_s: float = 2.0,
+        journal=None,
+        sleep: Any = time.sleep,
         mt5_module: Any | None = None,
     ) -> None:
         self.path = path
@@ -144,6 +151,11 @@ class MT5Broker:
         self.allow_live = allow_live
         self.timeout_ms = timeout_ms
         self.reference_symbol = reference_symbol
+        self.connect_attempts = max(1, connect_attempts)
+        self.connect_backoff_s = connect_backoff_s
+        self.journal = journal
+        self._sleep = sleep
+        self.reconnects = 0
         self._mt5 = mt5_module
         self._account: AccountInfo | None = None
         self._digits: dict[str, int] = {}
@@ -161,15 +173,33 @@ class MT5Broker:
             self._mt5 = mt5
         return self._mt5
 
+    def _event(self, severity: str, message: str, data: dict | None = None) -> None:
+        if self.journal is not None:
+            self.journal.event(severity, "mt5", message, data)
+
     def connect(self) -> AccountInfo:
+        """Attach to the terminal, retrying only the failure that is worth retrying.
+
+        A terminal that is still starting (-10003) will be ready in a moment; a wrong password will
+        not, and hammering it just locks the account. So retries are limited to the busy case.
+        """
         mt5 = self._lib()
         kwargs: dict[str, Any] = {"timeout": self.timeout_ms}
         if self.path:
             kwargs["path"] = self.path
         if self.login:
             kwargs.update(login=self.login, password=self.password or "", server=self.server or "")
-        if not mt5.initialize(**kwargs):
-            raise BrokerError(f"mt5.initialize failed: {describe_init_error(mt5.last_error())}")
+
+        for attempt in range(1, self.connect_attempts + 1):
+            if mt5.initialize(**kwargs):
+                break
+            error = mt5.last_error()
+            code = int(error[0]) if isinstance(error, tuple | list) and error else 0
+            retryable = code in RETRYABLE_INIT_ERRORS
+            if not retryable or attempt == self.connect_attempts:
+                raise BrokerError(f"mt5.initialize failed: {describe_init_error(error)}")
+            self._event("WARN", f"terminal not ready, retrying ({attempt}/{self.connect_attempts})", {"code": code})
+            self._sleep(self.connect_backoff_s * attempt)
         try:
             account = self._read_account(mt5)
             enforce_live_guard(account, self.allow_live)
@@ -194,6 +224,29 @@ class MT5Broker:
             raise BrokerError(f"symbol_info_tick({sym}) failed: {mt5.last_error()}")
         self.server_offset = measure_offset(raw.time)
         return self.server_offset
+
+    def ensure_connected(self) -> bool:
+        """Called every tick. Reconnects a dropped terminal rather than waiting for a human.
+
+        The check is `terminal_info().connected`, not our own flag: the process can be attached to a
+        terminal that has itself lost the broker, and our flag would happily say everything is fine.
+        """
+        try:
+            mt5 = self._lib()
+            if self.connected:
+                term = mt5.terminal_info()
+                if term is not None and getattr(term, "connected", True):
+                    return True
+                self._event("WARN", "terminal reports it is disconnected from the broker", None)
+            self.disconnect()
+            self.connect()
+            self.reconnects += 1
+            self._event("WARN", "reconnected to MT5", {"reconnects": self.reconnects})
+            return True
+        except Exception as e:  # noqa: BLE001 - a failed reconnect is a condition the loop handles
+            self._event("CRIT", "could not reconnect to MT5", {"error": str(e)})
+            self.connected = False
+            return False
 
     def disconnect(self) -> None:
         if self.connected:
