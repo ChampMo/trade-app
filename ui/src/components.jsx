@@ -28,16 +28,17 @@ export function Stat({ label, value, className = "" }) {
 }
 
 export function Gauge({ label, value, limit, unit = "%" }) {
-  const ratio = limit > 0 ? Math.min(1, Math.max(0, value / limit)) : 0;
+  const known = typeof value === "number" && Number.isFinite(value);
+  const ratio = known && limit > 0 ? Math.min(1, Math.max(0, value / limit)) : 0;
   // Colour by how close to the limit, not by the raw number: 2% of a 3% budget is nearly spent.
-  const tone = ratio >= 0.9 ? "bg-neg" : ratio >= 0.6 ? "bg-warn" : "bg-pos";
+  // An unknown value gets an empty bar, never a full one.
+  const tone = !known ? "bg-line" : ratio >= 0.9 ? "bg-neg" : ratio >= 0.6 ? "bg-warn" : "bg-pos";
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between text-xs">
         <span className="font-semibold">{label}</span>
         <span className="font-mono">
-          {value.toFixed(2)}
-          {unit} / {limit.toFixed(2)}
+          {known ? value.toFixed(2) + unit : "—"} / {limit.toFixed(2)}
           {unit}
         </span>
       </div>
@@ -154,14 +155,21 @@ export function FrozenBanner({ status }) {
 }
 
 export function riskNumbers(status) {
-  const equity = status?.equity ?? 0;
-  const dayStart = status?.day_start_equity || equity || 1;
-  const peak = status?.peak_equity || equity || 1;
+  // No core, no numbers. The previous version divided by a fallback of 1, which turned "we have
+  // not heard from the core" into "you are down 100%" with both bars full red — the single most
+  // alarming thing this header can say, shown for the most ordinary reason there is.
+  const equity = status?.equity;
+  if (typeof equity !== "number") {
+    return { equity: null, dailyLossPct: null, drawdownPct: null, todayPnl: null, known: false };
+  }
+  const dayStart = status?.day_start_equity > 0 ? status.day_start_equity : equity;
+  const peak = status?.peak_equity > 0 ? status.peak_equity : equity;
   return {
     equity,
-    dailyLossPct: Math.max(0, ((dayStart - equity) / dayStart) * 100),
-    drawdownPct: Math.max(0, ((peak - equity) / peak) * 100),
+    dailyLossPct: dayStart > 0 ? Math.max(0, ((dayStart - equity) / dayStart) * 100) : 0,
+    drawdownPct: peak > 0 ? Math.max(0, ((peak - equity) / peak) * 100) : 0,
     todayPnl: equity - dayStart,
+    known: true,
   };
 }
 

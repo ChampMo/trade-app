@@ -5,17 +5,35 @@
 const BASE = "/api";
 
 async function request(path, options = {}) {
-  const response = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (e) {
+    // The request never arrived: nothing is listening, or the dev proxy could not connect.
+    const error = new Error("nothing is listening on the core's port");
+    error.coreDown = true;
+    throw error;
+  }
+
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null; // an HTML error page from the proxy, not an answer from the core
+  }
+
   if (!response.ok) {
     // The core answers 409 when the state machine says no and 400 when a reason is missing.
     // Both are answers, not failures, so carry the message through to the button that asked.
     const error = new Error(body?.detail || `${response.status} ${response.statusText}`);
     error.status = response.status;
+    // A running core always answers JSON, even to say no. A 5xx with no JSON in it is the proxy
+    // reporting that it found nothing to talk to — which is a different problem with a different fix.
+    error.coreDown = !body && response.status >= 500;
     throw error;
   }
   return body;

@@ -31,7 +31,7 @@ export default function App() {
       setStatus(await api.status());
       setError(null);
     } catch (e) {
-      setError(e.message);
+      setError({ message: e.message, coreDown: Boolean(e.coreDown) });
     }
   }, []);
 
@@ -95,13 +95,40 @@ export default function App() {
 
         <main className="flex-1 min-w-0 overflow-auto p-4">
           {error ? (
-            <div className="card border-neg">
-              <h3 className="card-title text-neg">Cannot reach the core</h3>
-              <p className="text-sm">{error}</p>
-              <p className="text-xs text-muted">
-                The core runs separately from this window — that is deliberate, so closing the UI never stops
-                trading. Start it with <code className="font-mono">python -m tradeapp serve</code>.
-              </p>
+            <div className="card border-neg max-w-2xl">
+              <h3 className="card-title text-neg">
+                {error.coreDown ? "The core is not running" : "The core answered with an error"}
+              </h3>
+              {error.coreDown ? (
+                <>
+                  <p className="text-sm">
+                    This window is only a view. The part that trades runs as a separate process, which is why
+                    closing the window never stops trading — and why nothing is here when it is not started.
+                  </p>
+                  <p className="text-xs text-muted">Start it in a terminal, then this page comes back on its own:</p>
+                  {/* Two elements, not one <pre>: JSX collapses the newline between text lines and
+                      the two commands would run together on a single scrolling line. */}
+                  <div className="text-xs font-mono bg-paper border-[1.5px] border-line rounded p-2 flex flex-col gap-1 overflow-x-auto">
+                    <div>
+                      python -m tradeapp serve --fake{" "}
+                      <span className="text-muted">// simulated broker, no MT5 needed</span>
+                    </div>
+                    <div>
+                      python -m tradeapp serve{" "}
+                      <span className="text-muted">// the real thing, on the profile&apos;s account</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted">{error.message}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm">{error.message}</p>
+                  <p className="text-xs text-muted">
+                    The core is answering but something inside it failed. The Events page and the journal will
+                    have the reason.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <Current status={status} live={live} refresh={refresh} />

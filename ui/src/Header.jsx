@@ -21,7 +21,11 @@ export default function Header({ status, connection, reachable, onKill }) {
 
       <div className="flex items-center gap-5 shrink-0">
         <Stat label="Equity" value={money(risk.equity)} />
-        <Stat label="Today" value={signed(risk.todayPnl)} className={risk.todayPnl >= 0 ? "text-pos" : "text-neg"} />
+        <Stat
+          label="Today"
+          value={signed(risk.todayPnl)}
+          className={!risk.known ? "" : risk.todayPnl >= 0 ? "text-pos" : "text-neg"}
+        />
       </div>
 
       <div className="flex items-center gap-4 flex-1 min-w-0 max-w-lg">
