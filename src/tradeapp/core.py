@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
-from tradeapp.broker.servertime import utc_to_server
+from tradeapp.broker.servertime import server_to_utc, utc_to_server
 from tradeapp.context import Context
 from tradeapp.contracts import TF, AccountInfo, Position
 from tradeapp.execution import Executor
@@ -92,7 +92,15 @@ class Core:
         self._now = now
         self._sleep = sleep
 
-        self.engine = RiskEngine(self.limits, journal=journal, news=news, magic_base=magic_base)
+        self.engine = RiskEngine(
+            self.limits,
+            journal=journal,
+            news=news,
+            magic_base=magic_base,
+            # The real bridge can ask MT5 what an order would tie up. Brokers that cannot say
+            # (fake, paper, backtest) leave this None and the engine falls back to arithmetic.
+            margin_required=getattr(broker, "margin_required", None),
+        )
         self.executor = Executor(broker, journal, now=now, sleep=sleep)
         self.reconciler = Reconciler(broker, journal, now=now)
         self.analyst = analyst
@@ -253,6 +261,7 @@ class Core:
             peak_equity=self.peak_equity,
             state=self.kill.state,
             ai=ctx.ai,
+            strategy_day_pnl=self._strategy_day_pnl(now, ctx.symbol_info),
         )
         for signal in signals:
             decision = self.engine.evaluate(signal.intent, signal.key, risk_ctx, variant=signal.variant)
@@ -327,6 +336,31 @@ class Core:
             self.journal.set_state(DAY_KEY, today)
             self.journal.set_state(DAY_START_EQUITY, equity)
             self.journal.event("INFO", SOURCE, f"new trading day {today} (broker time)", {"day_start_equity": equity})
+
+    def _day_start_utc(self, now: datetime) -> datetime:
+        """Midnight on the broker's clock (D20), expressed in UTC so the journal can be queried."""
+        offset = getattr(self.broker, "server_offset", None)
+        minutes = offset.minutes if offset is not None and offset.minutes is not None else 0
+        midnight = utc_to_server(now, minutes).replace(hour=0, minute=0, second=0, microsecond=0)
+        return server_to_utc(midnight, minutes)
+
+    def _strategy_day_pnl(self, now: datetime, symbol_info) -> dict[str, float]:
+        """What each strategy has actually made or lost today, for its own daily budget.
+
+        Read at the only moment it can matter — a bar with signals on it — rather than every tick,
+        because it is a query over the journal and most ticks have nothing to decide.
+        """
+        if symbol_info is None:
+            return {}
+        try:
+            from tradeapp.reports import realized_pnl_by_strategy
+
+            return realized_pnl_by_strategy(
+                self.journal, self._day_start_utc(now), now, {self.config.symbol: symbol_info}
+            )
+        except Exception as e:  # noqa: BLE001 - a missing budget number must not stop trading
+            self.journal.event("WARN", SOURCE, "could not read today's PnL by strategy", {"error": str(e)})
+            return {}
 
     # --- helpers ------------------------------------------------------------------
 

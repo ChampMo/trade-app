@@ -27,6 +27,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from tradeapp.contracts import SymbolInfo
 from tradeapp.journal import Journal
 from tradeapp.journal.models import AICall, Decision, Order
 
@@ -321,3 +322,29 @@ def ab_table(journal: Journal, days: int = 30, now: datetime | None = None) -> d
             "magics": sorted({t.magic for t in group if t.magic}),
         }
     return out
+
+
+def realized_pnl_by_strategy(
+    journal: Journal,
+    start: datetime,
+    end: datetime,
+    symbols: dict[str, SymbolInfo],
+) -> dict[str, float]:
+    """Money made or lost per strategy on closed round trips in the window, in the account currency.
+
+    Derived from the journal's own fill prices rather than the broker's profit field, because the
+    journal is what survives a restart and what a post-mortem can replay. That means it captures
+    the spread (entries fill at the ask, exits at the bid) but **not** commission or swap, so a
+    strategy's real day is very slightly worse than this says. The number exists to answer "has
+    this strategy spent its budget today", where being a few cents optimistic changes nothing.
+    """
+    out: dict[str, float] = defaultdict(float)
+    for trade in collect_trades(journal, start, end):
+        sym = symbols.get(trade.symbol)
+        if sym is None or trade.points is None or not trade.volume:
+            continue
+        tick_size = sym.tick_size or sym.point
+        if tick_size <= 0 or sym.tick_value <= 0:
+            continue
+        out[trade.strategy or "unknown"] += (trade.points / tick_size) * sym.tick_value * trade.volume
+    return {k: round(v, 2) for k, v in out.items()}

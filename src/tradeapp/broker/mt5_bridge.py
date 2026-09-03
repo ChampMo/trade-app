@@ -113,6 +113,12 @@ def describe_init_error(err: Any) -> str:
     return f"{text} (code {code}) — {hint}" if hint else f"{text} (code {code})"
 
 
+def _optional_float(obj: Any, name: str) -> float | None:
+    """None when the broker did not report the field, so a check can skip instead of guessing."""
+    value = getattr(obj, name, None)
+    return None if value is None else float(value)
+
+
 def _as_dict(obj: Any) -> dict[str, Any]:
     """Named tuples from MetaTrader5 expose _asdict(); fall back to vars() for fakes."""
     if obj is None:
@@ -269,7 +275,24 @@ class MT5Broker:
             currency=str(info.currency),
             leverage=int(info.leverage),
             algo_trading=algo,
+            margin_free=_optional_float(info, "margin_free"),
+            margin_level=_optional_float(info, "margin_level"),
         )
+
+    def margin_required(self, symbol: str, side: Side, lots: float, price: float) -> float | None:
+        """What the broker itself says this order would tie up, in the account currency.
+
+        `order_calc_margin` knows the symbol's margin rate, the account leverage and the conversion
+        to the account currency, none of which we can reconstruct reliably. None means the terminal
+        would not answer, and the caller must fall back or skip rather than invent a number.
+        """
+        try:
+            mt5 = self._lib()
+            order_type = mt5.ORDER_TYPE_BUY if side is Side.LONG else mt5.ORDER_TYPE_SELL
+            value = mt5.order_calc_margin(order_type, symbol, lots, price)
+        except Exception:  # noqa: BLE001 - a margin estimate is never allowed to break a decision
+            return None
+        return float(value) if value is not None else None
 
     def account(self) -> AccountInfo:
         self._require_connected()
@@ -306,6 +329,8 @@ class MT5Broker:
             tick_value=float(getattr(info, "trade_tick_value", 0.0)),
             volume_max=float(getattr(info, "volume_max", 0.0)),
             contract_size=float(getattr(info, "trade_contract_size", 0.0)),
+            currency_base=str(getattr(info, "currency_base", "") or ""),
+            currency_profit=str(getattr(info, "currency_profit", "") or ""),
         )
 
     def tick(self, symbol: str) -> Tick:

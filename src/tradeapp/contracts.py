@@ -72,6 +72,10 @@ class AccountInfo:
     currency: str
     leverage: int
     algo_trading: bool  # terminal "Algo Trading" switch; False = every order_send is refused
+    # Margin, as the broker reports it. None means the broker did not say, and a check that needs
+    # it must skip rather than guess — 0.0 is a real value meaning "nothing left".
+    margin_free: float | None = None
+    margin_level: float | None = None  # equity / margin as a percentage; None when nothing is open
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,9 @@ class SymbolInfo:
     tick_value: float = 0.0
     volume_max: float = 0.0
     contract_size: float = 0.0
+    # Needed to turn lots into margin in the account currency. Empty means the broker did not say.
+    currency_base: str = ""
+    currency_profit: str = ""
 
 
 @dataclass(frozen=True)

@@ -110,7 +110,6 @@ def cmd_risk(args: argparse.Namespace) -> int:
     sym = broker.symbol_info(args.symbol)
     tick = broker.tick(args.symbol)
     positions = broker.positions()
-    broker.disconnect()
 
     side = Side.SHORT if args.short else Side.LONG
     entry = tick.bid if side is Side.SHORT else tick.ask
@@ -137,7 +136,11 @@ def cmd_risk(args: argparse.Namespace) -> int:
         day_start_equity=acct.equity,
         peak_equity=acct.equity,
     )
-    decision = RiskEngine(RiskLimits(), magic_base=settings.magic_base).evaluate(intent, args.strategy, ctx)
+    # Stay connected until the decision is made: the margin check asks the terminal itself what
+    # this order would tie up, and a disconnected terminal would silently fall back to arithmetic.
+    engine = RiskEngine(RiskLimits(), magic_base=settings.magic_base, margin_required=broker.margin_required)
+    decision = engine.evaluate(intent, args.strategy, ctx)
+    broker.disconnect()
 
     print(f"account   {acct.login}@{acct.server} equity {acct.equity:.2f} {acct.currency}")
     print(
@@ -148,7 +151,14 @@ def cmd_risk(args: argparse.Namespace) -> int:
     print(f"          {decision.detail}")
     if decision.order:
         o = decision.order
+        margin = decision.facts.get("margin_required")
+        free = acct.margin_free
         print(f"order     {o.volume} lots  sl {o.stop_price}  tp {o.take_price}  magic {o.magic}")
+        print(
+            f"margin    {margin if margin is not None else 'unknown'}"
+            + (f" of {free:.2f} free" if free is not None else " (broker did not report free margin)")
+        )
+        print(f"correlation {decision.facts.get('correlated_units')} copies of this bet would be open")
         print("          not sent: this command never reaches the broker")
     return 0 if decision.approved else 1
 

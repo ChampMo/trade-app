@@ -17,9 +17,11 @@ from typing import Protocol
 
 from tradeapp.contracts import AccountInfo, Intent, OrderRequest, Position, Side, SymbolInfo, Tick
 from tradeapp.journal import Journal
+from tradeapp.risk.correlation import correlated_units
 from tradeapp.risk.limits import AIContext, EngineState, RiskLimits, bias_size_multiplier
 from tradeapp.risk.sizing import (
     currency_units,
+    estimate_margin,
     lots_for_risk,
     money_at_risk_per_lot,
     net_currency_exposure,
@@ -42,6 +44,10 @@ class RejectReason(StrEnum):
     DUPLICATE_POSITION = "duplicate_position"
     MAX_POSITIONS = "max_positions"
     CURRENCY_EXPOSURE = "currency_exposure"
+    CORRELATED_EXPOSURE = "correlated_exposure"
+    STRATEGY_DAILY_LOSS = "strategy_daily_loss"
+    STRATEGY_OPEN_RISK = "strategy_open_risk"
+    INSUFFICIENT_MARGIN = "insufficient_margin"
     SIZE_BELOW_MINIMUM = "size_below_minimum"
     MAX_OPEN_RISK = "max_open_risk"
     SIZING_UNAVAILABLE = "sizing_unavailable"
@@ -50,6 +56,12 @@ class RejectReason(StrEnum):
 class Verdict(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class MarginQuote(Protocol):
+    """The broker's own `order_calc_margin`. None means it would not answer."""
+
+    def __call__(self, symbol: str, side: Side, lots: float, price: float) -> float | None: ...
 
 
 class NewsBlocker(Protocol):
@@ -71,6 +83,9 @@ class RiskContext:
     peak_equity: float
     state: EngineState = EngineState.RUNNING
     ai: AIContext = field(default_factory=AIContext.neutral)
+    # Realised money per strategy since the trading day opened, negative for a loss. The core reads
+    # it from the journal; an empty dict simply means the budget check has nothing to act on.
+    strategy_day_pnl: dict[str, float] = field(default_factory=dict)
 
     def symbol_info(self, symbol: str) -> SymbolInfo | None:
         return self.symbols.get(symbol)
@@ -100,10 +115,13 @@ class RiskEngine:
         journal: Journal | None = None,
         news: NewsBlocker | None = None,
         magic_base: int = 100_000,
+        margin_required: MarginQuote | None = None,
     ) -> None:
         self.limits = limits or RiskLimits()
         self.journal = journal
         self.news = news
+        # The broker's own margin arithmetic when we have it; `estimate_margin` is the fallback.
+        self.margin_required = margin_required
         self.magic_base = magic_base
         self._magics: dict[str, int] = {}
 
@@ -149,6 +167,17 @@ class RiskEngine:
                 RejectReason.DAILY_LOSS_LIMIT,
                 f"down {daily_loss_pct:.2f}% today, limit is {lim.daily_loss_limit_pct:.2f}%",
                 facts={"daily_loss_pct": round(daily_loss_pct, 4), "day_start_equity": ctx.day_start_equity},
+            )
+
+        strategy_pnl = ctx.strategy_day_pnl.get(strategy_id)
+        strategy_budget = ctx.account.equity * (lim.strategy_daily_loss_pct / 100.0)
+        if strategy_pnl is not None and strategy_pnl <= -strategy_budget:
+            return _reject(
+                RejectReason.STRATEGY_DAILY_LOSS,
+                f"{strategy_id} is down {abs(strategy_pnl):.2f} today, its budget is "
+                f"{strategy_budget:.2f} ({lim.strategy_daily_loss_pct:.2f}% of equity); "
+                "the account is still fine, this strategy is not",
+                facts={"strategy_day_pnl": round(strategy_pnl, 2), "strategy_budget": round(strategy_budget, 2)},
             )
 
         if not lim.within_trading_hours(ctx.now_utc):
@@ -217,6 +246,15 @@ class RiskEngine:
                 facts={"exposure": exposure},
             )
 
+        units, contributors = correlated_units(ctx.positions, intent.symbol, intent.side, floor=lim.correlation_floor)
+        if units > lim.max_correlated_units:
+            return _reject(
+                RejectReason.CORRELATED_EXPOSURE,
+                f"this would be {units:.2f} copies of the same bet (limit {lim.max_correlated_units:.2f}); "
+                f"correlated with {', '.join(f'{sym} {c:+.2f}' for sym, c in contributors)}",
+                facts={"correlated_units": units, "correlated_with": dict(contributors)},
+            )
+
         # --- sizing ---
         bias_mult = bias_size_multiplier(ai.bias, intent.side, lim.opposing_bias_size_penalty)
         size_mult = min(max(ai.size_mult, 0.0), lim.max_size_mult)
@@ -249,13 +287,35 @@ class RiskEngine:
                 facts={"open_risk": round(open_risk, 2), "added_risk": round(actual_risk, 2)},
             )
 
+        magic = self.magic_for(strategy_id)
+        strategy_open_risk = _open_risk(ctx, magic=magic)
+        strategy_ceiling = ctx.account.equity * (lim.strategy_max_open_risk_pct / 100.0)
+        if strategy_open_risk + actual_risk > strategy_ceiling:
+            return _reject(
+                RejectReason.STRATEGY_OPEN_RISK,
+                f"{strategy_id} already has {strategy_open_risk:.2f} at risk; adding {actual_risk:.2f} passes "
+                f"its own {strategy_ceiling:.2f} ceiling ({lim.strategy_max_open_risk_pct:.2f}% of equity)",
+                facts={"strategy_open_risk": round(strategy_open_risk, 2)},
+            )
+
+        margin = self._margin_for(intent.symbol, intent.side, lots, entry, ctx, sym)
+        if margin is not None and ctx.account.margin_free is not None:
+            allowed = ctx.account.margin_free * (lim.max_margin_use_pct / 100.0)
+            if margin > allowed:
+                return _reject(
+                    RejectReason.INSUFFICIENT_MARGIN,
+                    f"{lots} lots needs {margin:.2f} margin, more than the {allowed:.2f} allowed "
+                    f"({lim.max_margin_use_pct:.0f}% of {ctx.account.margin_free:.2f} free)",
+                    facts={"margin_required": round(margin, 2), "margin_free": ctx.account.margin_free},
+                )
+
         order = OrderRequest(
             symbol=intent.symbol,
             side=intent.side,
             volume=lots,
             stop_price=intent.stop_price,
             take_price=intent.take_price,
-            magic=self.magic_for(strategy_id),
+            magic=magic,
             comment=strategy_id[:31],
         )
         return RiskDecision(
@@ -275,8 +335,37 @@ class RiskEngine:
                 "open_risk_before": round(open_risk, 2),
                 "size_mult": size_mult,
                 "bias_mult": bias_mult,
+                "correlated_units": units,
+                "strategy_open_risk": round(strategy_open_risk, 2),
+                "margin_required": round(margin, 2) if margin is not None else None,
             },
         )
+
+    # --- margin ------------------------------------------------------------------
+
+    def _margin_for(
+        self,
+        symbol: str,
+        side: Side,
+        lots: float,
+        price: float,
+        ctx: RiskContext,
+        sym: SymbolInfo,
+    ) -> float | None:
+        """Ask the broker first; fall back to arithmetic; return None when neither can answer.
+
+        None means the check is skipped, which is the right behaviour: at 0.25% risk on 1:500
+        leverage margin is nowhere near binding, and refusing every trade because a number is
+        missing would be a far worse failure than the one this check exists to catch.
+        """
+        if self.margin_required is not None:
+            try:
+                quoted = self.margin_required(symbol, side, lots, price)
+            except Exception:  # noqa: BLE001 - a margin quote never breaks a decision
+                quoted = None
+            if quoted is not None:
+                return quoted
+        return estimate_margin(lots, sym, price, ctx.account.currency, ctx.account.leverage)
 
     # --- journal -----------------------------------------------------------------
 
@@ -333,7 +422,7 @@ def _pct_drop(current: float, reference: float) -> float:
     return max(0.0, (reference - current) / reference * 100.0)
 
 
-def _open_risk(ctx: RiskContext) -> float:
+def _open_risk(ctx: RiskContext, magic: int | None = None) -> float:
     """Total account-currency loss if every open stop were hit.
 
     A position whose stop vanished at the broker is treated as unbounded risk by raising, but the
@@ -342,6 +431,8 @@ def _open_risk(ctx: RiskContext) -> float:
     """
     total = 0.0
     for pos in ctx.positions:
+        if magic is not None and pos.magic != magic:
+            continue
         sym = ctx.symbol_info(pos.symbol)
         if sym is None or pos.sl <= 0:
             continue

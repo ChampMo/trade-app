@@ -30,6 +30,16 @@ class RiskLimits:
     max_open_risk_pct: float = 1.0  # what every open stop would cost if all were hit at once
     max_positions: int = 3  # across every strategy
     max_currency_exposure: int = 2  # net units of any single currency, so three EUR longs are one risk
+    # Correlation catches what netting cannot: two pairs with no common currency that still move
+    # together. Counted in whole positions, where the new trade is 1.0 (D23).
+    max_correlated_units: float = 2.0
+    correlation_floor: float = 0.5  # below this the number is noise; ignore it
+    # A single order may tie up at most this share of free margin. Nothing near binding at 0.25%
+    # risk on 1:500, but a live account must refuse rather than let the broker reject (D23).
+    max_margin_use_pct: float = 25.0
+    # One strategy may not spend the whole account's budget. Both are shares of equity.
+    strategy_max_open_risk_pct: float = 0.5
+    strategy_daily_loss_pct: float = 1.5
     trading_start_utc: time = time(7, 0)
     trading_end_utc: time = time(20, 0)
     # A stop must clear the broker's own minimum plus the spread, or the order is rejected on arrival.

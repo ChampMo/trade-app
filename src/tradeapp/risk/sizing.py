@@ -85,3 +85,31 @@ def net_currency_exposure(positions: list[Position], extra: dict[str, int] | Non
     for cur, units in (extra or {}).items():
         totals[cur] = totals.get(cur, 0) + units
     return {cur: units for cur, units in totals.items() if units != 0}
+
+
+def estimate_margin(
+    lots: float,
+    sym: SymbolInfo,
+    price: float,
+    account_currency: str,
+    leverage: int,
+) -> float | None:
+    """Rough margin for a new position, in the account currency, when the broker will not say.
+
+    The broker's own `order_calc_margin` is always preferred; this is the fallback. It can only
+    answer when the account currency is one of the two in the pair, because anything else needs a
+    cross rate the engine does not have. **None means "cannot tell"** and the caller must skip the
+    check — inventing a number here would either block every trade or wave through a real problem.
+    """
+    if lots <= 0 or leverage <= 0 or sym.contract_size <= 0 or price <= 0:
+        return None
+    pair = split_pair(sym.symbol)
+    base = sym.currency_base or (pair[0] if pair else "")
+    quote = sym.currency_profit or (pair[1] if pair else "")
+    notional_base = lots * sym.contract_size
+    account = account_currency.upper()
+    if base.upper() == account:
+        return notional_base / leverage  # USDJPY on a USD account: the notional is already in USD
+    if quote.upper() == account:
+        return notional_base * price / leverage  # EURUSD on a USD account
+    return None
