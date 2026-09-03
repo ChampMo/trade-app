@@ -284,7 +284,7 @@ def _parse_params(pairs: list[str]) -> dict:
 
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Replay stored history through the live decision path."""
-    from tradeapp.backtest import CostModel, gate_report, monte_carlo, on_timeframe, run_backtest
+    from tradeapp.backtest import CostModel, gate_report, monte_carlo, on_symbol, on_timeframe, run_backtest
     from tradeapp.contracts import TF
     from tradeapp.data import BarStore
     from tradeapp.strategies import create
@@ -304,7 +304,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     params = _parse_params(args.param)
     result = run_backtest(
         bars,
-        [on_timeframe(create(args.strategy, **params), tf)],
+        [on_symbol(on_timeframe(create(args.strategy, **params), tf), args.symbol)],
         symbol=args.symbol,
         timeframe=tf,
         costs=costs,

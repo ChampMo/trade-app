@@ -55,6 +55,18 @@ class BacktestResult:
         }
 
 
+def on_symbol(strategy, symbol: str):
+    """Point a strategy at the symbol being replayed, for the same reason as `on_timeframe`.
+
+    A strategy declares the pairs it was written for; a backtest asking "what would this idea do
+    on GBPUSD" is a legitimate question, and the symbol is stored with the run so the answer can
+    never be mistaken for one on the declared pair. The loop never does this (D28): there, a
+    market a strategy did not declare needs the owner to attach it, with the gate attached (D29).
+    """
+    strategy.symbols = [symbol]
+    return strategy
+
+
 def on_timeframe(strategy, timeframe):
     """Point a strategy at the timeframe being replayed.
 

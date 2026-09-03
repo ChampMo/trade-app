@@ -338,3 +338,12 @@ def test_gate_report_collects_what_the_gates_read():
     mc = monte_carlo(result.trades, result.start_balance, runs=50)
     report = gate_report(result, mc)
     assert set(report) >= {"trades", "max_drawdown_pct", "monte_carlo_p95_drawdown", "stopped_early"}
+
+
+def test_a_backtest_can_ask_what_a_strategy_would_do_on_another_pair():
+    """The loop never re-points a strategy (D28); a backtest may, and says so in the run."""
+    from tradeapp.backtest import on_symbol
+    from tradeapp.strategies.ema_cross import EmaCross
+
+    s = on_symbol(EmaCross(), "GBPUSD")
+    assert s.symbols == ["GBPUSD"]
