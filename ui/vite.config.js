@@ -25,4 +25,13 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist", emptyOutDir: true },
+  // Vitest reads this file too. The UI has no backend of its own to test against: what is worth
+  // testing here is the arithmetic the header does on the core's numbers, and what the client
+  // concludes when the core does not answer. Both have already been wrong once.
+  test: {
+    environment: "jsdom",
+    globals: true,
+    include: ["src/**/*.test.{js,jsx}"],
+    restoreMocks: true,
+  },
 });

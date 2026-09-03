@@ -43,7 +43,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/execution.py` — the only code that opens a position. Retries only the retcodes that mean the order never reached the book (never a TIMEOUT: it is ambiguous and a retry can double-open), records signed slippage, enforces rule 03 after the fill, and produces the counters the kill switch reads.
 - `src/tradeapp/journal/` — SQLAlchemy models + `Journal` store (SQLite, all timestamps naive UTC). Tables: `events`, `orders`, `decisions`, `ai_calls`, `state` (D21) and `backtests` (every run, so a live period can be compared against one). Schema upgrades are additive and apply themselves; older code refuses a newer journal.
 - `src/tradeapp/smoke.py` — Phase 0 proof: open and close one DEMO order with every step journaled.
-- `ui/` — Vite + React + Tailwind, wrapped by Electron. It talks to the core **only** over the local API: no MT5 client, no credentials, no way to place an order. Closing the window never stops trading. Six pages: Dashboard, Strategies, Research (run a backtest, read stored runs, compare one with live), Risk (**read-only**, because a limit is a decision), Journal and Events.
+- `ui/` — Vite + React + Tailwind, wrapped by Electron. It talks to the core **only** over the local API: no MT5 client, no credentials, no way to place an order. Closing the window never stops trading. Six pages: Dashboard, Strategies, Research (run a backtest, read stored runs, compare one with live), Risk (**read-only**, because a limit is a decision), Journal and Events. `npm test` runs vitest over the two things the UI can get wrong on its own: the arithmetic behind the risk gauges, and what the client concludes when the core does not answer. Both have been wrong once — an absent core rendered as a 100% loss.
 - `docs/` — `DECISIONS.md` (locked decisions), `RESEARCH.md` (every backtest run and what it said, including the failures), `plan-v1.md`, `plan-review.md`, `design/`.
 - `BACKLOG.md` — the ordered work queue. Take the top unblocked item.
 
@@ -65,6 +65,7 @@ pytest -q
 cd ui && npm install       # once
 npm run dev                # browser at the port it prints
 npm start                  # Vite + Electron together
+npm test                   # vitest: the header's arithmetic and what the client concludes
 
 # Phase 0 checks
 python -m tradeapp check          # connect to MT5, print account/terminal/symbol info, no orders
@@ -97,7 +98,7 @@ python -m tradeapp journal --tail 30
 
 - Work on a branch. Never push to `main`. Open a PR; the owner merges and restarts anything.
 - Pick the top item in `BACKLOG.md` whose dependencies are done; do exactly its scope; stop when its "Done when" holds. Vague item = write a clarification into the item instead of guessing.
-- Before opening a PR: `ruff check` clean, `pytest` green, and `tests/test_no_claude_dependency.py` + `tests/test_no_secrets.py` still present and passing.
+- Before opening a PR: `ruff check` clean, `pytest` green, `npm test` in `ui/` green when the UI changed, and `tests/test_no_claude_dependency.py` + `tests/test_no_secrets.py` still present and passing.
 - Never weaken a test to make it pass. Never change risk limits, gates or kill triggers without a matching edit to `docs/DECISIONS.md` and an explicit note in the PR.
 - Never add a runtime dependency on Claude, Anthropic SDKs or the `claude` CLI. Never add `anthropic` to `pyproject.toml`.
 - Never run `python -m tradeapp smoke` against anything but a DEMO account. Never set `ALLOW_LIVE`.
