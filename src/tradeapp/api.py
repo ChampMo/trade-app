@@ -43,6 +43,10 @@ class BacktestBody(BaseModel):
     slippage_points: float = Field(default=0.3, ge=0, le=100)
     commission: float = Field(default=0.0, ge=0, le=100)
     monte_carlo: int = Field(default=1000, ge=0, le=5000)
+    walk_forward: bool = False
+    # Strategy parameters, e.g. {"trail_atr_mult": 2.5}. Bounded in count and shape: this reaches
+    # a constructor, and a constructor is not a place to accept arbitrary payloads.
+    params: dict[str, float | int | bool | str] = Field(default_factory=dict, max_length=12)
     label: str = Field(default="", max_length=64)
 
 

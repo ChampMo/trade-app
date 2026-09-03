@@ -69,6 +69,18 @@ def save_run(
             "profitable_windows": walk_forward.profitable_windows,
             "efficiency": walk_forward.efficiency,
             "summary": walk_forward.summary(),
+            # The windows themselves, because "efficiency 0.5" is a number to argue with and a
+            # list of in-sample/out-of-sample pairs is the evidence behind it.
+            "rows": [
+                {
+                    "test_from": w.test_from.isoformat(),
+                    "train_return_pct": w.train_return_pct,
+                    "test_return_pct": w.test_return_pct,
+                    "test_trades": w.test_trades,
+                    "params": w.params,
+                }
+                for w in walk_forward.windows
+            ],
         }
     mc = None
     if monte_carlo is not None:

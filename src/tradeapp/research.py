@@ -104,6 +104,7 @@ class BacktestRunner:
         tf = TF(str(params.get("timeframe", "H4")).upper())
         strategy = params.get("strategy", "ema_cross")
         warmup = int(params.get("warmup", 100))
+        strategy_params = dict(params.get("params") or {})
 
         bars = BarStore(self.history_db).load(symbol, tf)
         if len(bars) <= warmup + 1:
@@ -117,7 +118,7 @@ class BacktestRunner:
         )
         result = run_backtest(
             bars,
-            [create(strategy)],
+            [create(strategy, **strategy_params)],
             symbol=symbol,
             timeframe=tf,
             costs=costs,
@@ -125,11 +126,33 @@ class BacktestRunner:
             warmup=warmup,
         )
 
+        wf = None
+        if params.get("walk_forward"):
+            from datetime import timedelta
+
+            from tradeapp.backtest import walk_forward as run_walk_forward
+
+            # One parameter set, not a grid. This answers "does it hold up out of sample", which
+            # is the question worth asking; searching a grid for the best past is the other thing.
+            wf = run_walk_forward(
+                bars,
+                build=lambda prm: [create(strategy, **prm)],
+                param_grid=[strategy_params or {}],
+                train=timedelta(days=180),
+                test=timedelta(days=60),
+                step=timedelta(days=60),
+                symbol=symbol,
+                timeframe=tf,
+                costs=costs,
+                start_balance=float(params.get("balance", 10_000.0)),
+                warmup=warmup,
+            )
+
         mc = gates = None
         if result.stats.trades:
             runs = min(int(params.get("monte_carlo", 1000)), MAX_MONTE_CARLO)
             mc = monte_carlo(result.trades, result.start_balance, runs=runs)
-            gates = gate_report(result, mc, None)
+            gates = gate_report(result, mc, wf)
 
         # Its own Journal on purpose: this runs on a worker thread, and sharing the loop's handle
         # across threads is the kind of thing that works until the day it does not.
@@ -138,7 +161,7 @@ class BacktestRunner:
             journal,
             result,
             strategy=strategy,
-            params={"tf": tf.value, "warmup": warmup},
+            params={"tf": tf.value, "warmup": warmup, **strategy_params},
             costs={
                 "spread_points": costs.spread_points,
                 "use_bar_spread": costs.use_bar_spread,
@@ -146,6 +169,7 @@ class BacktestRunner:
                 "commission_per_lot_round_trip": costs.commission_per_lot_round_trip,
             },
             label=params.get("label") or "from the UI",
+            walk_forward=wf,
             monte_carlo=mc,
             gates=gates,
         )

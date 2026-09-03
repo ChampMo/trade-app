@@ -4,6 +4,7 @@ import { Card, Empty, Pill, Stat } from "../components";
 import { EquityCurve, TradeChart } from "../charts";
 import { holdHours, tradePoints } from "../lib/series";
 import { money, signed, utc } from "../lib/format";
+import { describeParams, parseParams } from "../lib/params";
 
 const DEFAULTS = {
   strategy: "ema_cross",
@@ -16,6 +17,8 @@ const DEFAULTS = {
   slippage_points: 0.3,
   commission: 0,
   monte_carlo: 1000,
+  walk_forward: false,
+  params: "",
   label: "",
 };
 
@@ -30,6 +33,7 @@ export default function Research() {
   const [trade, setTrade] = useState(null);
   const [bars, setBars] = useState(null);
   const [drift, setDrift] = useState(null);
+  const [compare, setCompare] = useState({ a: null, b: null });
   const [job, setJob] = useState(null);
   const [error, setError] = useState(null);
 
@@ -67,7 +71,13 @@ export default function Research() {
   const start = async () => {
     setError(null);
     try {
-      setJob(await api.startBacktest({ ...form, balance: Number(form.balance) }));
+      setJob(
+        await api.startBacktest({
+          ...form,
+          balance: Number(form.balance),
+          params: parseParams(form.params),
+        }),
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -161,6 +171,15 @@ export default function Research() {
           {number("warmup")}
           {number("monte_carlo")}
           {field(
+            "params",
+            <input
+              className="input font-mono"
+              placeholder="trail_atr_mult=2.5"
+              value={form.params}
+              onChange={(e) => set("params", e.target.value)}
+            />,
+          )}
+          {field(
             "label",
             <input className="input font-mono" value={form.label} onChange={(e) => set("label", e.target.value)} />,
           )}
@@ -171,6 +190,14 @@ export default function Research() {
               onChange={(e) => set("use_bar_spread", e.target.checked)}
             />
             <span className="text-xs">spread from bars</span>
+          </label>
+          <label className="flex items-end gap-2 pb-1">
+            <input
+              type="checkbox"
+              checked={form.walk_forward}
+              onChange={(e) => set("walk_forward", e.target.checked)}
+            />
+            <span className="text-xs">walk-forward</span>
           </label>
           <div className="flex items-end">
             <button className="btn w-full" onClick={start} disabled={job?.status === "running"}>
@@ -234,6 +261,14 @@ export default function Research() {
         )}
       </Card>
 
+      {runs.length > 1 && (
+        <CompareCard
+          runs={runs}
+          compare={compare}
+          onChange={setCompare}
+        />
+      )}
+
       {selected && (
         <RunDetail
           run={selected}
@@ -289,6 +324,7 @@ function RunDetail({ run, trade, bars, drift, onPickTrade, onDrift }) {
         <div className="text-xs text-muted">
           Exits {JSON.stringify(s.exits || {})} · rejections {JSON.stringify(run.rejections || {})}
         </div>
+        <div className="text-xs text-muted">parameters: {describeParams(runParams(run))}</div>
         {run.monte_carlo && <div className="text-xs font-mono">{run.monte_carlo.summary}</div>}
         {run.walk_forward && <div className="text-xs font-mono">{run.walk_forward.summary}</div>}
         {run.killed && <div className="text-xs text-neg">stopped early: {run.killed}</div>}
@@ -305,6 +341,8 @@ function RunDetail({ run, trade, bars, drift, onPickTrade, onDrift }) {
 
       {/* The table carries ten columns and is the thing being read; the chart scales to whatever
           width is left over. */}
+      {run.walk_forward?.rows?.length > 0 && <WalkForwardCard wf={run.walk_forward} />}
+
       <div className="grid grid-cols-[1.45fr_1fr] gap-4">
         <Card title="Trades" right={trade ? `#${trades.indexOf(trade) + 1} selected` : "click a row"}>
           <div className="max-h-[26rem] overflow-auto">
@@ -391,6 +429,139 @@ function DriftPanel({ drift }) {
           {n}
         </p>
       ))}
+    </Card>
+  );
+}
+
+
+/** Parameters as stored: the run keeps tf and warmup alongside the strategy's own. */
+function runParams(run) {
+  const { tf, warmup, ...rest } = run.params || {};
+  return rest;
+}
+
+function WalkForwardCard({ wf }) {
+  const rows = wf.rows || [];
+  return (
+    <Card title="Walk-forward" right={wf.summary}>
+      <p className="text-xs text-muted">
+        Each row fits on 180 days and then trades the next 60 it has never seen. In-sample results are the
+        strategy describing its own past; only the out-of-sample column is evidence.
+      </p>
+      <div className="max-h-64 overflow-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-surface">
+            <tr>
+              {["Test from", "In sample", "Out of sample", "Trades"].map((h) => (
+                <th key={h} className="th">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((w) => (
+              <tr key={w.test_from}>
+                <td className="td">{utc(w.test_from, true)}</td>
+                <td className={`td font-mono ${w.train_return_pct >= 0 ? "text-pos" : "text-neg"}`}>
+                  {w.train_return_pct?.toFixed(2)}%
+                </td>
+                <td className={`td font-mono ${w.test_return_pct >= 0 ? "text-pos" : "text-neg"}`}>
+                  {w.test_return_pct?.toFixed(2)}%
+                </td>
+                <td className="td font-mono">{w.test_trades}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+
+// Comparing two stored runs is the question every parameter change has to answer, and the reason
+// runs are stored at all. Deliberately a comparison of two things that were both measured, not a
+// search across a grid for the best-looking past.
+const COMPARE_ROWS = [
+  ["net", (r) => r.stats?.net, (v) => signed(v), "higher"],
+  ["return %", (r) => r.stats?.return_pct, (v) => `${(v ?? 0).toFixed(2)}%`, "higher"],
+  ["profit factor", (r) => r.stats?.profit_factor, (v) => (v ?? 0).toFixed(2), "higher"],
+  ["expectancy", (r) => r.stats?.expectancy, (v) => signed(v), "higher"],
+  ["win rate", (r) => r.stats?.win_rate, (v) => `${(v ?? 0).toFixed(1)}%`, "neither"],
+  ["trades", (r) => r.stats?.trades, (v) => v ?? 0, "neither"],
+  ["max drawdown", (r) => r.stats?.max_drawdown_pct, (v) => `${(v ?? 0).toFixed(2)}%`, "lower"],
+  ["losing streak", (r) => r.stats?.longest_losing_streak, (v) => v ?? 0, "lower"],
+  ["costs", (r) => r.stats?.costs, (v) => money(v), "lower"],
+  ["avg hold", (r) => r.stats?.avg_hold_hours, (v) => `${(v ?? 0).toFixed(1)}h`, "neither"],
+  ["walk-forward efficiency", (r) => r.walk_forward?.efficiency, (v) => (v == null ? "—" : v.toFixed(3)), "higher"],
+];
+
+function CompareCard({ runs, compare, onChange }) {
+  const a = runs.find((r) => r.id === Number(compare.a));
+  const b = runs.find((r) => r.id === Number(compare.b));
+
+  const picker = (side) => (
+    <select
+      className="input font-mono w-auto"
+      value={compare[side] ?? ""}
+      onChange={(e) => onChange({ ...compare, [side]: e.target.value })}
+    >
+      <option value="">run…</option>
+      {runs.map((r) => (
+        <option key={r.id} value={r.id}>
+          #{r.id} {r.strategy} {r.label ? `· ${r.label}` : ""}
+        </option>
+      ))}
+    </select>
+  );
+
+  return (
+    <Card title="Compare two runs" right={<div className="flex gap-2">{picker("a")}{picker("b")}</div>}>
+      {!a || !b ? (
+        <Empty>pick two runs to see them side by side</Empty>
+      ) : (
+        <>
+          <table className="w-full text-xs">
+            <thead>
+              <tr>
+                <th className="th">Metric</th>
+                <th className="th">#{a.id} {describeParams(runParams(a))}</th>
+                <th className="th">#{b.id} {describeParams(runParams(b))}</th>
+                <th className="th">Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {COMPARE_ROWS.map(([name, read, fmt, better]) => {
+                const va = read(a);
+                const vb = read(b);
+                const known = typeof va === "number" && typeof vb === "number";
+                const delta = known ? vb - va : null;
+                const good = better === "neither" || delta === null || delta === 0
+                  ? ""
+                  : (better === "higher") === delta > 0
+                    ? "text-pos"
+                    : "text-neg";
+                return (
+                  <tr key={name}>
+                    <td className="td">{name}</td>
+                    <td className="td font-mono">{fmt(va)}</td>
+                    <td className="td font-mono">{fmt(vb)}</td>
+                    <td className={`td font-mono ${good}`}>
+                      {delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="text-xs text-muted">
+            Green means the second run is better on a measure where better has a direction. Win rate and trade count
+            have none: a higher win rate bought by cutting winners short is not an improvement, and the profit factor
+            is where that shows up.
+          </p>
+        </>
+      )}
     </Card>
   );
 }
