@@ -55,6 +55,18 @@ class BacktestResult:
         }
 
 
+def on_timeframe(strategy, timeframe):
+    """Point a strategy at the timeframe being replayed.
+
+    A strategy declares the timeframe it was written for, and the runtime skips it on any other —
+    which is right in the loop and wrong in a backtest, where "what would this idea do on M1" is
+    exactly the question being asked. The replayed timeframe is stored with the run, so a result
+    can never be mistaken for one on the strategy's own timeframe.
+    """
+    strategy.timeframe = timeframe
+    return strategy
+
+
 def run_backtest(
     bars: list[Bar],
     strategies,

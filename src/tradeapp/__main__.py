@@ -284,7 +284,7 @@ def _parse_params(pairs: list[str]) -> dict:
 
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Replay stored history through the live decision path."""
-    from tradeapp.backtest import CostModel, gate_report, monte_carlo, run_backtest
+    from tradeapp.backtest import CostModel, gate_report, monte_carlo, on_timeframe, run_backtest
     from tradeapp.contracts import TF
     from tradeapp.data import BarStore
     from tradeapp.strategies import create
@@ -304,7 +304,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     params = _parse_params(args.param)
     result = run_backtest(
         bars,
-        [create(args.strategy, **params)],
+        [on_timeframe(create(args.strategy, **params), tf)],
         symbol=args.symbol,
         timeframe=tf,
         costs=costs,
@@ -730,15 +730,35 @@ def _build_core(settings, args, journal):
 
     # A simulated broker's bars are invented and must never reach the history the research reads,
     # so syncing is real-broker only.
-    history = None
-    if not args.fake:
-        from tradeapp.data import BarStore
+    from tradeapp.data import BarStore
 
-        history = BarStore(settings.history_path)
+    store = BarStore(settings.history_path)
+    # The bars on disk are the same whichever broker drives the loop, so the market book always
+    # sees them. Only *writing* to the store is real-broker only.
+    history = None if args.fake else store
 
-    markets = _markets_for(runtime, args.symbol, tf)
+    # What to trade: what the strategies declare, plus whatever the owner attached from the
+    # Markets page, minus what they switched off, narrowed by the flags (D28, D29). Read again on
+    # the reconcile timer so a change on the page does not need a restart.
+    from tradeapp.markets import MarketBook, declared_markets
+
+    book = MarketBook(journal, store=store)
+
+    def market_book() -> tuple:
+        declared = declared_markets(runtime)
+        for strategy, allowed in book.strategy_markets(declared).items():
+            for m in allowed:
+                runtime.allow_market(strategy, m.symbol, m.timeframe)
+        wanted = {s.strip().upper() for s in (args.symbol or "").split(",") if s.strip()}
+        return tuple(
+            m
+            for m in book.active(declared)
+            if (not wanted or m.symbol.upper() in wanted) and (tf is None or m.timeframe == tf)
+        )
+
+    markets = market_book()
     if not markets:
-        raise SystemExit("no market to trade: the registered strategies declare none that match --symbol/--tf")
+        raise SystemExit("no market to trade: nothing the strategies declare matches --symbol/--tf, or all are off")
 
     core = Core(
         broker,
@@ -753,6 +773,7 @@ def _build_core(settings, args, journal):
             sync_history_every_s=0.0 if args.fake else float(getattr(args, "sync_history", 0) or 0) * 3600,
         ),
         history=history,
+        market_book=market_book,
         limits=RiskLimits(),
         news=news,
         analyst=analyst,

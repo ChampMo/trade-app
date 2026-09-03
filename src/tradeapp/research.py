@@ -94,7 +94,7 @@ class BacktestRunner:
             job.finished_utc = datetime.now(UTC)
 
     def _execute(self, params: dict[str, Any]) -> tuple[int, str]:
-        from tradeapp.backtest import CostModel, gate_report, monte_carlo, run_backtest, save_run
+        from tradeapp.backtest import CostModel, gate_report, monte_carlo, on_timeframe, run_backtest, save_run
         from tradeapp.contracts import TF
         from tradeapp.data import BarStore
         from tradeapp.journal import Journal
@@ -118,7 +118,7 @@ class BacktestRunner:
         )
         result = run_backtest(
             bars,
-            [create(strategy, **strategy_params)],
+            [on_timeframe(create(strategy, **strategy_params), tf)],
             symbol=symbol,
             timeframe=tf,
             costs=costs,
@@ -136,7 +136,7 @@ class BacktestRunner:
             # is the question worth asking; searching a grid for the best past is the other thing.
             wf = run_walk_forward(
                 bars,
-                build=lambda prm: [create(strategy, **prm)],
+                build=lambda prm: [on_timeframe(create(strategy, **prm), tf)],
                 param_grid=[strategy_params or {}],
                 train=timedelta(days=180),
                 test=timedelta(days=60),

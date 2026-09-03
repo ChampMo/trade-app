@@ -13,7 +13,7 @@ code path, two callers.
 from __future__ import annotations
 
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tradeapp.contracts import Intent
@@ -32,6 +32,10 @@ class Slot:
     error: str | None = None
     calls: int = 0
     signals: int = 0
+    # Markets the owner attached from the UI, on top of what the strategy declares (D29). Kept
+    # here rather than written into the strategy so the declaration in code stays the truth about
+    # what its author tested.
+    extra_markets: set = field(default_factory=set)
 
     @property
     def id(self) -> str:
@@ -82,9 +86,7 @@ class StrategyRuntime:
         """Ask every enabled strategy that trades this symbol. Never raises."""
         signals: list[Signal] = []
         for slot in list(self.slots):
-            if not slot.enabled or ctx.symbol not in slot.strategy.symbols:
-                continue
-            if getattr(slot.strategy, "timeframe", ctx.timeframe) != ctx.timeframe:
+            if not slot.enabled or not self._trades_here(slot, ctx):
                 continue
             slot.calls += 1
             try:
@@ -107,6 +109,20 @@ class StrategyRuntime:
             slot.signals += 1
             signals.append(Signal(strategy_id=slot.id, variant=slot.variant, intent=intent))
         return signals
+
+    @staticmethod
+    def _trades_here(slot: Slot, ctx) -> bool:
+        """Either the strategy declared this market, or the owner attached it deliberately."""
+        declared = ctx.symbol in slot.strategy.symbols and (
+            getattr(slot.strategy, "timeframe", ctx.timeframe) == ctx.timeframe
+        )
+        return declared or (ctx.symbol, ctx.timeframe) in slot.extra_markets
+
+    def allow_market(self, key: str, symbol: str, timeframe) -> None:
+        """Let one slot trade one market beyond its declaration."""
+        slot = self.slot(key)
+        if slot is not None:
+            slot.extra_markets.add((symbol, timeframe))
 
     def manage(self, key: str, ctx, position, initial_stop: float | None) -> float | None:
         """Ask the strategy that opened this position where its stop should be now.

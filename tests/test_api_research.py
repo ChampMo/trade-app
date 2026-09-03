@@ -314,3 +314,66 @@ def test_an_unknown_timeframe_is_refused(client):
 def test_a_symbol_with_no_bars_is_an_empty_list_not_an_error(client, tmp_path):
     client.runner.history_db = str(tmp_path / "history.db")
     assert client.get("/bars?symbol=GBPUSD&timeframe=H4").json()["bars"] == []
+
+
+# --- the markets page (D29) ----------------------------------------------------------------
+
+
+def test_markets_lists_what_the_strategies_declare(client):
+    body = client.get("/markets").json()
+    rows = {(r["symbol"], r["timeframe"]): r for r in body["markets"]}
+    assert ("EURUSD", "H4") in rows
+    assert rows[("EURUSD", "H4")]["declared"] is True
+    assert rows[("EURUSD", "H4")]["enabled"] is True
+
+
+def test_a_market_can_be_switched_off_and_on_again(client):
+    payload = {"strategy": "always_long", "symbol": "EURUSD", "timeframe": "H4", "reason": "testing"}
+
+    off = client.post("/markets/disable", json=payload).json()
+    assert off["active"] == []
+
+    on = client.post("/markets/enable", json=payload).json()
+    assert on["active"] == [{"symbol": "EURUSD", "timeframe": "H4"}]
+
+
+def test_attaching_a_market_with_no_history_is_refused_with_a_reason(client, tmp_path):
+    client.runner.history_db = str(tmp_path / "empty.db")
+    r = client.post("/markets/add", json={"strategy": "always_long", "symbol": "GBPUSD", "timeframe": "H4"})
+    assert r.status_code == 400
+    assert "no stored bars" in r.json()["detail"]
+    assert "data sync" in r.json()["detail"]
+
+
+def test_attaching_a_market_with_history_works_and_is_journaled(client, journal: Journal, tmp_path):
+    from tradeapp.contracts import TF, Bar
+    from tradeapp.data import BarStore
+
+    store = BarStore(tmp_path / "history.db")
+    store.upsert(
+        "GBPUSD",
+        TF.H4,
+        [
+            Bar(
+                time_utc=datetime(2026, 1, 1, tzinfo=UTC) + timedelta(hours=4 * i),
+                open=1.3,
+                high=1.31,
+                low=1.29,
+                close=1.3,
+            )
+            for i in range(10)
+        ],
+    )
+    client.runner.history_db = str(tmp_path / "history.db")
+
+    body = client.post("/markets/add", json={"strategy": "always_long", "symbol": "GBPUSD", "timeframe": "H4"}).json()
+
+    assert {"symbol": "GBPUSD", "timeframe": "H4"} in body["active"]
+    attached = next(r for r in body["markets"] if r["symbol"] == "GBPUSD")
+    assert attached["declared"] is False and attached["bars"] == 10
+    assert any("never written for" in e.message for e in journal.tail_events(20))
+
+
+def test_an_unknown_strategy_cannot_be_given_a_market(client):
+    r = client.post("/markets/add", json={"strategy": "ghost", "symbol": "GBPUSD", "timeframe": "H4"})
+    assert r.status_code == 400 and "no strategy called" in r.json()["detail"]

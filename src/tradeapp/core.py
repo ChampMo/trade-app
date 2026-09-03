@@ -112,6 +112,7 @@ class Core:
         analyst=None,
         notifier=None,
         history=None,
+        market_book=None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -136,6 +137,10 @@ class Core:
         self.reconciler = Reconciler(broker, journal, now=now)
         self.analyst = analyst
         self.history = history
+        # What the loop is trading right now. Starts from the config and can be changed while
+        # running, by the owner through the Markets page (D29).
+        self.markets: tuple[Market, ...] = self.config.market_list
+        self.market_book = market_book
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)
 
         self.account: AccountInfo | None = None
@@ -238,6 +243,7 @@ class Core:
         # 2. reconcile on its own timer, and always when we have never done it
         if self._reconcile_due(now):
             self._reconcile()
+            self._refresh_markets()
             report.reconciled = True
         report.frozen = self.reconciler.frozen
 
@@ -270,7 +276,7 @@ class Core:
         # The account-wide work above happens once; this part happens per market, and one market
         # failing to produce bars never stops the others.
         symbols = self._symbol_infos()
-        for market in self.config.market_list:
+        for market in self.markets:
             self._trade_market(market, now, report, symbols)
         return report
 
@@ -298,7 +304,7 @@ class Core:
         # nobody is going to trade. Only the first market asks: the analyst returns one view of
         # conditions, not one per chart, and asking once per market would multiply the bill for
         # the same answer.
-        if self.analyst is not None and market == self.config.market_list[0]:
+        if self.analyst is not None and self.markets and market == self.markets[0]:
             outcome = self.analyst.refresh(ctx)
             if not outcome.used_model:
                 report.note(f"ai: {outcome.detail}")
@@ -476,6 +482,29 @@ class Core:
         self.reconciler.run()
         self.last_reconcile_at = self._now()
 
+    def _refresh_markets(self) -> None:
+        """Pick up what the owner changed on the Markets page, without a restart.
+
+        Turning a market off stops new decisions there and nothing else: open positions keep the
+        stops they already have at the broker, and reconcile still watches them.
+        """
+        if self.market_book is None:
+            return
+        try:
+            wanted = tuple(self.market_book())
+        except Exception as e:  # noqa: BLE001 - a bad read must not stop the loop trading
+            self.journal.event("WARN", SOURCE, "could not read the market book", {"error": str(e)})
+            return
+        if wanted == self.markets:
+            return
+        self.journal.event(
+            "INFO",
+            SOURCE,
+            "markets changed",
+            {"from": [str(m) for m in self.markets], "to": [str(m) for m in wanted]},
+        )
+        self.markets = wanted
+
     def _symbol_infos(self) -> dict:
         """Symbol info for every market, not just the one being decided.
 
@@ -484,7 +513,7 @@ class Core:
         a tick, and a symbol the broker cannot describe is simply left out and reported.
         """
         out = {}
-        for market in self.config.market_list:
+        for market in self.markets:
             if market.symbol in out:
                 continue
             try:
@@ -504,7 +533,7 @@ class Core:
         """Pull recent bars into the store. Never raises: stale history is a research problem,
         not a trading one, and it must not be able to stop the loop."""
         self.last_history_sync_at = now
-        for market in self.config.market_list:
+        for market in self.markets:
             try:
                 result = self.history.sync_from_broker(
                     self.broker, market.symbol, market.timeframe, count=self.config.sync_history_bars
@@ -556,7 +585,7 @@ class Core:
                     "timeframe": m.timeframe.value,
                     "last_bar_utc": self._last_bars[m].isoformat() if m in self._last_bars else None,
                 }
-                for m in self.config.market_list
+                for m in self.markets
             ],
             "consecutive_rejects": self.executor.consecutive_rejects,
             # The watchdog's two numbers. Silence is what the kill switch counts, and a climbing

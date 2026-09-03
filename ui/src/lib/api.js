@@ -51,6 +51,11 @@ export const api = {
   // Research is read-mostly: everything below reads, except startBacktest, which starts a job on
   // the core's own worker thread and answers immediately with something to poll.
   riskLimits: () => request("/risk/limits"),
+  markets: () => request("/markets"),
+  marketEnable: (body) => request("/markets/enable", { method: "POST", body: JSON.stringify(body) }),
+  marketDisable: (body) => request("/markets/disable", { method: "POST", body: JSON.stringify(body) }),
+  marketAdd: (body) => request("/markets/add", { method: "POST", body: JSON.stringify(body) }),
+  marketRemove: (body) => request("/markets/remove", { method: "POST", body: JSON.stringify(body) }),
   runs: (limit = 25, strategy) =>
     request(`/backtest/runs?limit=${limit}${strategy ? `&strategy=${encodeURIComponent(strategy)}` : ""}`),
   run: (id) => request(`/backtest/runs/${id}`),

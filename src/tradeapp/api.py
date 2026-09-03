@@ -30,6 +30,15 @@ class ReasonBody(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class MarketBody(BaseModel):
+    """Which strategy on which market. The same three fields for every market change."""
+
+    strategy: str = Field(max_length=32)
+    symbol: str = Field(max_length=16)
+    timeframe: str = Field(max_length=4)
+    reason: str = Field(default="", max_length=200)
+
+
 class BacktestBody(BaseModel):
     """What the Research page may ask for. Bounded on purpose: this endpoint starts real work."""
 
@@ -226,6 +235,68 @@ def create_app(
             "notes": report.notes,
             "markdown": reports.render_drift(report),
         }
+
+    # --- markets (D29) ---------------------------------------------------------------
+
+    def _book():
+        from tradeapp.data import BarStore
+        from tradeapp.markets import MarketBook
+
+        return MarketBook(journal, store=BarStore(runner.history_db))
+
+    def _declared():
+        from tradeapp.markets import declared_markets
+
+        return declared_markets(service.core.runtime)
+
+    @app.get("/markets")
+    def markets() -> dict:
+        """Every market a strategy declares or the owner attached, and whether it is switched on."""
+        book = _book()
+        declared = _declared()
+        rows = book.rows(declared)
+        active = book.active(declared)
+        return {
+            "markets": [row.as_dict() for row in rows],
+            "active": [{"symbol": m.symbol, "timeframe": m.timeframe.value} for m in active],
+            "trading": [
+                {"symbol": m.symbol, "timeframe": m.timeframe.value} for m in getattr(service.core, "markets", ())
+            ],
+        }
+
+    @app.post("/markets/enable")
+    def market_enable(body: MarketBody) -> dict:
+        _book().enable(body.strategy, body.symbol.upper(), body.timeframe.upper())
+        return markets()
+
+    @app.post("/markets/disable")
+    def market_disable(body: MarketBody) -> dict:
+        """Stops new decisions there. Open positions keep their stops at the broker."""
+        _book().disable(body.strategy, body.symbol.upper(), body.timeframe.upper(), body.reason)
+        return markets()
+
+    @app.post("/markets/add")
+    def market_add(body: MarketBody) -> dict:
+        """Attach a market a strategy was never written for. Needs history; demotes to research."""
+        from tradeapp.lifecycle import Lifecycle
+        from tradeapp.markets import MarketRefused
+
+        try:
+            _book().add(
+                body.strategy,
+                body.symbol,
+                body.timeframe,
+                known_strategies={slot.key for slot in service.core.runtime.slots},
+                lifecycle=Lifecycle(journal),
+            )
+        except MarketRefused as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return markets()
+
+    @app.post("/markets/remove")
+    def market_remove(body: MarketBody) -> dict:
+        _book().remove(body.strategy, body.symbol, body.timeframe)
+        return markets()
 
     @app.get("/backtest/options")
     def backtest_options() -> dict:
