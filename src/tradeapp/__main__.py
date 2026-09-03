@@ -256,6 +256,28 @@ def cmd_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_params(pairs: list[str]) -> dict:
+    """`--param fast=10 --param trail_atr_mult=2.5` into the kwargs a strategy takes.
+
+    Numbers are numbers so a strategy does not have to defend itself against strings; anything
+    that is not a number stays text.
+    """
+    out: dict = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise SystemExit(f"--param needs KEY=VALUE, got {pair!r}")
+        key, _, raw = pair.partition("=")
+        raw = raw.strip()
+        if raw.lower() in {"true", "false"}:
+            out[key.strip()] = raw.lower() == "true"
+            continue
+        try:
+            out[key.strip()] = int(raw) if raw.lstrip("-").isdigit() else float(raw)
+        except ValueError:
+            out[key.strip()] = raw
+    return out
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Replay stored history through the live decision path."""
     from tradeapp.backtest import CostModel, gate_report, monte_carlo, run_backtest
@@ -275,9 +297,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         slippage_points=args.slippage,
         commission_per_lot_round_trip=args.commission,
     )
+    params = _parse_params(args.param)
     result = run_backtest(
         bars,
-        [create(args.strategy)],
+        [create(args.strategy, **params)],
         symbol=args.symbol,
         timeframe=tf,
         costs=costs,
@@ -345,7 +368,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             Journal(settings.journal_path),
             result,
             strategy=args.strategy,
-            params={"tf": tf.value, "warmup": args.warmup},
+            params={"tf": tf.value, "warmup": args.warmup, **params},
             costs={
                 "spread_points": args.spread,
                 "use_bar_spread": not args.flat_spread,
@@ -1006,6 +1029,13 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--walk-forward", action="store_true", help="also fit and test on rolling windows")
     bt.add_argument("--show-windows", type=int, default=8)
     bt.add_argument("--db", default="data/history.db")
+    bt.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="strategy parameter, repeatable, e.g. --param trail_atr_mult=2.5",
+    )
     bt.add_argument("--label", default=None, help="what this run was for, e.g. 'baseline before the ATR change'")
     bt.add_argument("--no-save", action="store_true", help="do not store the run in the journal")
     bt.set_defaults(fn=cmd_backtest)

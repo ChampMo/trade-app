@@ -59,6 +59,7 @@ class TickReport:
     frozen: bool = False
     new_bar: bool = False
     signals: int = 0
+    stops_moved: int = 0
     approved: int = 0
     rejected: int = 0
     sent: int = 0
@@ -236,6 +237,11 @@ class Core:
         self.last_bar_utc = ctx.bar.time_utc
         report.new_bar = True
 
+        # 4b. look after what is already open before opening anything else. Exits are where a
+        # 1:2 system with a 29% win rate makes or loses its money, and a stop that has been
+        # tightened is the cheapest protection there is.
+        report.stops_moved = self._manage_open_positions(ctx, report)
+
         # A new closed bar is exactly when a fresh view is worth paying for, and the only moment
         # it can change anything. Refreshing on a wall clock would spend the budget on bars that
         # nobody is going to trade.
@@ -287,6 +293,43 @@ class Core:
             else:
                 report.note(f"{signal.key}: execution failed, {result.detail}")
         return report
+
+    def _manage_open_positions(self, ctx: Context, report: TickReport) -> int:
+        """Ask each strategy about its own open positions, once per closed bar.
+
+        Once per bar, not once per tick: the same cadence decisions are made on, so a backtest and
+        a live account manage a position at exactly the same moments (rule 04). Every proposal goes
+        through `risk/stops.py`, which refuses anything that would widen risk.
+        """
+        if not self.positions or ctx.symbol_info is None or ctx.tick is None:
+            return 0
+        moved = 0
+        for position in list(self.positions):
+            if position.symbol != ctx.symbol:
+                continue
+            key = self.engine.strategy_for_magic(position.magic)
+            if key is None:
+                continue  # not ours; reconcile owns foreign positions
+            initial = self.journal.original_stop(position.ticket) or position.sl or None
+            proposed = self.runtime.manage(key, ctx, position, initial)
+            if proposed is None:
+                continue
+            verdict = self.executor.move_stop(
+                position,
+                proposed,
+                ctx.symbol_info,
+                ctx.tick,
+                reason=f"{key} exit management",
+            )
+            if verdict.ok:
+                moved += 1
+                report.note(f"{key}: stop {position.sl} -> {verdict.price} on {position.ticket}")
+        if moved:
+            try:
+                self.positions = self.broker.positions()
+            except Exception as e:  # noqa: BLE001 - a stale list here only delays the next move
+                self.journal.event("WARN", SOURCE, "could not re-read positions after moving a stop", {"error": str(e)})
+        return moved
 
     # --- health and equity marks --------------------------------------------------
 

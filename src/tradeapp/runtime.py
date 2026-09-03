@@ -108,6 +108,32 @@ class StrategyRuntime:
             signals.append(Signal(strategy_id=slot.id, variant=slot.variant, intent=intent))
         return signals
 
+    def manage(self, key: str, ctx, position, initial_stop: float | None) -> float | None:
+        """Ask the strategy that opened this position where its stop should be now.
+
+        Optional: a strategy with no `manage` simply never moves a stop. Failures are isolated the
+        same way `on_bar` failures are — a strategy that raises here is disabled rather than
+        allowed to take the loop down with it — and the position keeps the stop it has, which is
+        the safe direction to fail in.
+        """
+        slot = next((s for s in self.slots if s.key == key), None)
+        if slot is None or not slot.enabled:
+            return None
+        hook = getattr(slot.strategy, "manage", None)
+        if hook is None:
+            return None
+        try:
+            proposed = hook(ctx, position, initial_stop)
+        except Exception as e:  # noqa: BLE001 - isolation is the point of this class
+            self.disable(slot, f"manage() raised: {type(e).__name__}: {e}", trace=traceback.format_exc(limit=6))
+            return None
+        if proposed is None:
+            return None
+        if not isinstance(proposed, int | float) or isinstance(proposed, bool) or proposed <= 0:
+            self.disable(slot, f"manage() returned {proposed!r}, which is not a price")
+            return None
+        return float(proposed)
+
     @staticmethod
     def _validate(intent: Any, ctx) -> str | None:
         if not isinstance(intent, Intent):

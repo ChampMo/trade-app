@@ -133,6 +133,15 @@ class RiskEngine:
             self._magics[strategy_id] = self.magic_base + len(self._magics) + 1
         return self._magics[strategy_id]
 
+    def strategy_for_magic(self, magic: int | None) -> str | None:
+        """Which strategy opened this position. Used to ask the right one about its own exits."""
+        if magic is None:
+            return None
+        for key, assigned in self._magics.items():
+            if assigned == magic:
+                return key
+        return None
+
     # --- the one entry point -----------------------------------------------------
 
     def evaluate(self, intent: Intent, strategy_id: str, ctx: RiskContext, variant: str | None = None) -> RiskDecision:

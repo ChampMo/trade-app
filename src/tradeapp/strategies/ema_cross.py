@@ -11,6 +11,7 @@ else. Sizing, limits and whether the trade happens at all belong to the Risk Eng
 from __future__ import annotations
 
 from tradeapp.contracts import TF, Intent, Side
+from tradeapp.exits import atr_trail, best_of, break_even
 from tradeapp.strategies import register
 
 
@@ -29,6 +30,9 @@ class EmaCross:
         sl_atr_mult: float = 1.5,
         rr: float = 2.0,
         confidence: float = 0.6,
+        break_even_r: float = 0.0,
+        break_even_offset_points: float = 0.0,
+        trail_atr_mult: float = 0.0,
     ) -> None:
         if fast >= slow:
             raise ValueError("fast period must be shorter than slow")
@@ -38,6 +42,11 @@ class EmaCross:
         self.sl_atr_mult = sl_atr_mult
         self.rr = rr
         self.confidence = confidence
+        # Exit management, off by default. Turning either on is a parameter change like any other:
+        # it needs its own backtest, and it demotes the strategy to research (D3).
+        self.break_even_r = break_even_r
+        self.break_even_offset_points = break_even_offset_points
+        self.trail_atr_mult = trail_atr_mult
 
     @property
     def params(self) -> dict:
@@ -47,7 +56,38 @@ class EmaCross:
             "atr_period": self.atr_period,
             "sl_atr_mult": self.sl_atr_mult,
             "rr": self.rr,
+            "break_even_r": self.break_even_r,
+            "break_even_offset_points": self.break_even_offset_points,
+            "trail_atr_mult": self.trail_atr_mult,
         }
+
+    def manage(self, ctx, position, initial_stop):
+        """Where the stop should be now, or None to leave it alone.
+
+        Only ever the tighter of what break-even and the trail ask for: a looser stop is refused
+        downstream anyway, and proposing one would fill the journal with rejections. Both are off
+        unless configured, so the strategy behaves exactly as it always did until someone turns
+        one on and backtests it.
+        """
+        if not (self.break_even_r or self.trail_atr_mult):
+            return None
+        price = ctx.close()
+        point = ctx.symbol_info.point if ctx.symbol_info else 0.00001
+        candidates = []
+        if self.break_even_r and initial_stop:
+            candidates.append(
+                break_even(
+                    position,
+                    price,
+                    initial_stop,
+                    trigger_r=self.break_even_r,
+                    offset_points=self.break_even_offset_points,
+                    point=point,
+                )
+            )
+        if self.trail_atr_mult:
+            candidates.append(atr_trail(position, price, ctx.atr(self.atr_period), multiple=self.trail_atr_mult))
+        return best_of(*candidates, side=position.side)
 
     def on_bar(self, ctx) -> Intent | None:
         if not ctx.has_history(self.slow + 2):

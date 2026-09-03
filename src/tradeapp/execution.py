@@ -22,8 +22,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tradeapp.broker.mt5_bridge import RETCODE_RETRYABLE
-from tradeapp.contracts import OrderRequest, OrderResult, Position, Side
+from tradeapp.contracts import OrderRequest, OrderResult, Position, Side, SymbolInfo, Tick
 from tradeapp.journal import Journal
+from tradeapp.risk.stops import StopVerdict, validate_move
 
 SOURCE = "exec"
 
@@ -275,6 +276,69 @@ class Executor:
         )
         self.close(ticket, client_ref=ref, reason="no stop at broker")
         return False, None
+
+    # --- moving a stop --------------------------------------------------------------
+
+    def move_stop(
+        self,
+        position: Position,
+        new_stop: float,
+        sym: SymbolInfo,
+        tick: Tick,
+        *,
+        reason: str = "",
+        client_ref: str | None = None,
+    ) -> StopVerdict:
+        """Tighten a stop. Refuses anything that would widen risk, and journals either way.
+
+        This lives in the executor because rule 02 keeps every broker trading call in one place.
+        The *decision* is a pure function in `risk/stops.py`; this is the part that talks.
+        """
+        verdict = validate_move(position, new_stop, sym, tick)
+        ref = client_ref or f"stop-{position.ticket}"
+        if verdict.refused:
+            # A refusal is normal traffic — a trail proposes on every bar and most proposals are
+            # not improvements — so it is a decision row, not an event, and not a broker call.
+            self.journal.decision(
+                strategy_id=position.comment or "unknown",
+                symbol=position.symbol,
+                side=position.side.value,
+                verdict="REJECTED",
+                verdict_reason=f"{verdict.reason.value}: {verdict.detail}",
+                context={"ticket": position.ticket, "proposed_stop": new_stop, "current_stop": position.sl},
+            )
+            return verdict
+
+        res = self.broker.modify_sltp(position.ticket, verdict.price, position.tp or None)
+        self._contacted()
+        order_row(
+            self.journal,
+            ref,
+            "modify",
+            None,
+            res,
+            symbol=position.symbol,
+            side=position.side.value,
+            magic=position.magic,
+            sl=verdict.price,
+            tp=position.tp or None,
+        )
+        if not res.ok:
+            self.journal.event(
+                "WARN",
+                SOURCE,
+                "broker refused a stop move",
+                {"ticket": position.ticket, "to": verdict.price, "retcode": res.retcode_desc},
+            )
+            return StopVerdict(False, reason=None, detail=f"broker said {res.retcode_desc}")
+
+        self.journal.event(
+            "INFO",
+            SOURCE,
+            f"stop moved {position.sl} -> {verdict.price} on {position.symbol}",
+            {"ticket": position.ticket, "from": position.sl, "to": verdict.price, "reason": reason},
+        )
+        return verdict
 
     # --- closing ------------------------------------------------------------------
 

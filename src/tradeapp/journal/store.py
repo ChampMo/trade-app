@@ -190,6 +190,26 @@ class Journal:
             rows = s.execute(select(Event).order_by(Event.id.desc()).limit(n)).scalars().all()
             return list(reversed(rows))
 
+    def original_stop(self, position_ticket: int) -> float | None:
+        """The stop this position was opened with, not the one it has now.
+
+        A trail moves the stop, and after that the distance from entry no longer says what was
+        risked — so break-even and R multiples read the original from here. It comes off the
+        opening order row, which means it survives a restart in the middle of a trade.
+        """
+        with self._session() as s:
+            row = (
+                s.execute(
+                    select(Order)
+                    .where(Order.position_ticket == position_ticket, Order.kind == "open", Order.ok.is_(True))
+                    .order_by(Order.id)
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+        return row.sl if row and row.sl else None
+
     def orders_for(self, client_ref: str) -> list[Order]:
         with self._session() as s:
             return list(s.execute(select(Order).where(Order.client_ref == client_ref).order_by(Order.id)).scalars())
