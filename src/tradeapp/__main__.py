@@ -355,6 +355,37 @@ def _telegram(settings, journal, quiet: bool = True):
     return TelegramNotifier(token, settings.telegram_chat_id, journal)
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """The daily post-mortem and the A/B table. Neither of them proposes anything (D11)."""
+    from tradeapp import reports
+
+    settings = load_settings()
+    journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
+
+    if args.action == "ab":
+        table = reports.ab_table(journal, days=args.days)
+        if not table:
+            print(f"no closed trades in the last {args.days} days")
+            return 0
+        print(f"{'variant':<24}{'trades':>8}{'closed':>8}{'wins':>7}{'win rate':>10}{'slippage':>10}")
+        for key, row in sorted(table.items()):
+            print(
+                f"{key:<24}{row['trades']:>8}{row['closed']:>8}{row['wins']:>7}"
+                f"{row['win_rate']:>9.1f}%{row['avg_slippage']:>9.2f}p"
+            )
+        print("\nIf the variant with the AI does not beat the one without it, that is an answer worth having (D9).")
+        return 0
+
+    report = reports.build(journal, args.day)
+    text = reports.render(report)
+    if args.write:
+        path = reports.write(report, args.dir)
+        print(f"written to {path}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_notify(args: argparse.Namespace) -> int:
     """Send one message so you can prove the channel works before you need it."""
     settings = load_settings()
@@ -805,6 +836,15 @@ def main(argv: list[str] | None = None) -> int:
     lf.add_argument("--tf", default="H4")
     lf.add_argument("--db", default="data/history.db")
     lf.set_defaults(fn=cmd_lifecycle)
+
+    rp = sub.add_parser("report", help="daily post-mortem, and the A/B comparison by variant")
+    rp.add_argument("action", choices=["postmortem", "ab"])
+    rp.add_argument("--day", default=None, help="YYYY-MM-DD, defaults to today")
+    rp.add_argument("--days", type=int, default=30, help="lookback for the A/B table")
+    rp.add_argument("--write", action="store_true", help="write to reports/ instead of printing")
+    rp.add_argument("--dir", default="reports")
+    rp.add_argument("--fake", action="store_true", help="read the simulated-runs journal")
+    rp.set_defaults(fn=cmd_report)
 
     nt = sub.add_parser("notify", help="prove the Telegram channel works before you need it")
     nt.add_argument("action", choices=["test", "status", "poll"])

@@ -18,6 +18,8 @@ data/*
 !data/.gitkeep
 logs/*
 !logs/.gitkeep
+reports/*
+!reports/.gitkeep
 
 # node / electron
 node_modules/
