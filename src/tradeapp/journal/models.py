@@ -5,6 +5,7 @@ Tables:
   orders      every order request and its result, open/close/modify, with slippage and SL verification
   decisions   one row per strategy decision incl. rejected/blocked ones (filled from Phase 1)
   ai_calls    raw prompt + response of every LLM call (filled from Phase 3)
+  backtests   one row per stored backtest, so live trading can be compared against it (P4-04)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-SCHEMA_VERSION = 2  # 2 adds the `state` table (D21)
+SCHEMA_VERSION = 3  # 2 adds the `state` table (D21); 3 adds `backtests` (P4-04)
 
 
 class Base(DeclarativeBase):
@@ -126,3 +127,39 @@ class AICall(Base):
     schema_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     parsed: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BacktestRun(Base):
+    """One stored backtest, so a result can be compared against live trading later (P4-04).
+
+    Without this every backtest lives in a terminal scrollback and RESEARCH.md, which is fine for
+    reading and useless for comparing: the drift report needs the same window, the same costs and
+    the same statistics that the live period is measured with.
+
+    The equity curve is deliberately **not** stored — it is one point per bar and adds megabytes
+    for something no comparison uses. The closed trades are, because every drift metric is computed
+    from them.
+    """
+
+    __tablename__ = "backtests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, index=True)
+    label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    strategy: Mapped[str] = mapped_column(String(32), index=True)
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8))
+    data_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    data_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bars: Mapped[int] = mapped_column(Integer)
+    start_balance: Mapped[float] = mapped_column(Float)
+    end_balance: Mapped[float] = mapped_column(Float)
+    costs: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSON)
+    trades: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    walk_forward: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    monte_carlo: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    gates: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    killed: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejections: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

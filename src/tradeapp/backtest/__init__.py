@@ -1,6 +1,7 @@
 from tradeapp.backtest.broker import BacktestBroker, ClosedTrade, split_windows
 from tradeapp.backtest.costs import ZERO_COSTS, CostModel
 from tradeapp.backtest.engine import BacktestResult, run_backtest
+from tradeapp.backtest.record import save_run, stats_dict, trade_rows
 from tradeapp.backtest.robustness import (
     MonteCarloResult,
     WalkForwardResult,
@@ -24,6 +25,9 @@ __all__ = [
     "gate_report",
     "monte_carlo",
     "run_backtest",
+    "save_run",
+    "stats_dict",
+    "trade_rows",
     "split_windows",
     "walk_forward",
 ]

@@ -29,7 +29,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/risk/` — **the only door to the market** (rule 02). `limits.py` holds D3's numbers, the engine state and the AI context; `sizing.py` is the pure money arithmetic (including the margin fallback); `correlation.py` is a coarse table that may only ever refuse (D23); `engine.py` turns an `Intent` into an `OrderRequest` or a journaled rejection; `killswitch.py` is the emergency brake (rule 06, D12a) and is the one module allowed to close positions directly, never to open them. `tests/test_rule_02_single_door.py` fails the build if anything else builds an order or calls the broker's trading methods.
 - `src/tradeapp/backtest/` — the live system fed from a file. `broker.py` is a `Broker` made of history so the backtest drives the real Core/Risk/Executor; `costs.py` holds the measured XM numbers (D18); `stats.py` and `robustness.py` produce what the gates read. Never add a second decision path here — that is the whole point of the package.
 - `src/tradeapp/ai/` — the run-time AI layer. `schemas.py` is the safety story: four bounded numbers, validated strictly, and a bad shape keeps the previous view rather than retrying. `client.py` is one httpx POST with a journal-backed daily budget. `analyst.py` is the only agent whose output can change a trade, and its prompt carries **no account data**. Absent or out of budget is a normal state.
-- `src/tradeapp/reports.py` — the daily post-mortem and the A/B table. It explains and never proposes; `regime` is deliberately not classified automatically (D11).
+- `src/tradeapp/reports.py` — the daily post-mortem, the A/B table and the live-vs-backtest drift report. All three explain and never propose; `regime` is deliberately not classified automatically, and drift refuses to conclude anything under 20 live trades (D11).
 - `src/tradeapp/notify.py` — Telegram. Outbound never raises; inbound trusts exactly one chat id. `/kill` works from a phone, `/unlock` deliberately does not.
 - `src/tradeapp/calendar.py` — economic calendar and news windows. **No LLM**: release times are known in advance, so this is a rule, not a prediction. Feeds in by file or by a URL the owner chose; there is deliberately no default.
 - `src/tradeapp/lifecycle.py` — D3's gates as code that refuses. No force parameter; a parameter change demotes to research.
@@ -41,7 +41,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/context.py` + `indicators.py` — the only view a strategy has of the world (rule 04). Indicators match MT5's definitions (SMA-seeded EMA, Wilder ATR/RSI) and return `None` during warm-up.
 - `src/tradeapp/reconcile.py` — the broker is the truth. Orphans (broker has it, ledger does not) freeze new entries; ghosts (ledger has it, broker does not) are a stop doing its job and are recorded quietly (D17). Feeds `reconcile_mismatch` and `positions_without_stop` to the kill switch.
 - `src/tradeapp/execution.py` — the only code that opens a position. Retries only the retcodes that mean the order never reached the book (never a TIMEOUT: it is ambiguous and a retry can double-open), records signed slippage, enforces rule 03 after the fill, and produces the counters the kill switch reads.
-- `src/tradeapp/journal/` — SQLAlchemy models + `Journal` store (SQLite, all timestamps naive UTC).
+- `src/tradeapp/journal/` — SQLAlchemy models + `Journal` store (SQLite, all timestamps naive UTC). Tables: `events`, `orders`, `decisions`, `ai_calls`, `state` (D21) and `backtests` (every run, so a live period can be compared against one). Schema upgrades are additive and apply themselves; older code refuses a newer journal.
 - `src/tradeapp/smoke.py` — Phase 0 proof: open and close one DEMO order with every step journaled.
 - `ui/` — Vite + React + Tailwind, wrapped by Electron. It talks to the core **only** over the local API: no MT5 client, no credentials, no way to place an order. Closing the window never stops trading.
 - `docs/` — `DECISIONS.md` (locked decisions), `RESEARCH.md` (every backtest run and what it said, including the failures), `plan-v1.md`, `plan-review.md`, `design/`.
@@ -86,6 +86,8 @@ python -m tradeapp calendar import --file week.json   # then: calendar show
 python -m tradeapp run --fake --ai                    # the loop with the analyst enabled
 python -m tradeapp report postmortem --day 2026-09-02 # what happened, classified
 python -m tradeapp report ab                          # does the AI variant actually win
+python -m tradeapp report runs                        # every stored backtest
+python -m tradeapp report drift --strategy ema_cross  # live against the run it was promoted on
 python -m tradeapp notify test                        # prove alerts work before you need them
 python -m tradeapp serve --telegram --ai              # everything on
 python -m tradeapp journal --tail 30

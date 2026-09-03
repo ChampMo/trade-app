@@ -348,3 +348,257 @@ def realized_pnl_by_strategy(
             continue
         out[trade.strategy or "unknown"] += (trade.points / tick_size) * sym.tick_value * trade.volume
     return {k: round(v, 2) for k, v in out.items()}
+
+
+# --- drift: live against the backtest it was promoted on (P4-04) --------------------------
+
+
+DRIFT_MIN_TRADES = 20  # below this the comparison is noise, and the report says so first
+
+
+@dataclass
+class Metric:
+    name: str
+    backtest: float | None
+    live: float | None
+    worse: bool
+    note: str = ""
+
+    @property
+    def gap(self) -> float | None:
+        if self.backtest is None or self.live is None:
+            return None
+        return round(self.live - self.backtest, 2)
+
+
+@dataclass
+class DriftReport:
+    run_id: int
+    strategy: str
+    symbol: str
+    generated_utc: datetime
+    days: int
+    backtest_trades: int
+    live_trades: int
+    metrics: list[Metric] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    live_slippage: float = 0.0
+
+    @property
+    def meaningful(self) -> bool:
+        return self.live_trades >= DRIFT_MIN_TRADES
+
+    @property
+    def diverging(self) -> list[Metric]:
+        """Empty until the sample is large enough. A difference over five trades is not drift."""
+        return [m for m in self.metrics if m.worse] if self.meaningful else []
+
+
+def _points(entry: float | None, exit_: float | None, side: str | None, point: float) -> float | None:
+    if entry is None or exit_ is None or side is None or point <= 0:
+        return None
+    sign = 1 if side.upper() == "LONG" else -1
+    return sign * (exit_ - entry) / point
+
+
+def _profile(points: list[float], hold_hours: list[float], span_days: float) -> dict[str, float | None]:
+    """The five numbers both sides are compared on. Points, not money, so lot size cannot distort."""
+    if not points:
+        return {
+            "trades_per_week": 0.0,
+            "win_rate": None,
+            "avg_win": None,
+            "avg_loss": None,
+            "expectancy": None,
+            "avg_hold_hours": None,
+        }
+    wins = [p for p in points if p > 0]
+    losses = [p for p in points if p <= 0]
+    weeks = max(span_days / 7.0, 1e-9)
+    return {
+        "trades_per_week": round(len(points) / weeks, 2),
+        "win_rate": round(len(wins) / len(points) * 100, 1),
+        "avg_win": round(sum(wins) / len(wins), 1) if wins else 0.0,
+        "avg_loss": round(sum(losses) / len(losses), 1) if losses else 0.0,
+        "expectancy": round(sum(points) / len(points), 1),
+        "avg_hold_hours": round(sum(hold_hours) / len(hold_hours), 1) if hold_hours else None,
+    }
+
+
+def build_drift(
+    journal: Journal,
+    run_id: int,
+    *,
+    days: int = 30,
+    point: float = 0.00001,
+    now: datetime | None = None,
+) -> DriftReport:
+    """Compare live trading against the stored backtest the strategy was promoted on.
+
+    The comparison is in **points per trade**, not money: lot sizes differ between a backtest on a
+    flat 10,000 and a live account that has moved since, and comparing money would call that drift.
+
+    Nothing here is a verdict on the strategy. A live win rate below the backtest is the expected
+    state for a small sample, which is why the report refuses to draw conclusions under
+    `DRIFT_MIN_TRADES` trades and says so before anything else.
+    """
+    moment = now or datetime.now(UTC)
+    run = journal.backtest_run(run_id)
+    if run is None:
+        raise KeyError(f"no backtest run #{run_id} in the journal")
+
+    stored = run.trades or []
+    bt_points = [
+        p for p in (_points(t.get("entry"), t.get("exit"), t.get("side"), point) for t in stored) if p is not None
+    ]
+    bt_hold = []
+    for t in stored:
+        try:
+            opened = datetime.fromisoformat(t["opened_utc"])
+            closed = datetime.fromisoformat(t["closed_utc"])
+            bt_hold.append((closed - opened).total_seconds() / 3600)
+        except (KeyError, TypeError, ValueError):
+            continue
+    bt_span = ((run.data_to - run.data_from).days if run.data_from and run.data_to else 1) or 1
+    backtest = _profile(bt_points, bt_hold, bt_span)
+
+    start = moment - timedelta(days=days)
+    live_trades = [t for t in collect_trades(journal, start, moment + timedelta(days=1)) if t.closed]
+    # Only this strategy's trades, and a variant counts (`ema_cross` covers `ema_cross:B`). A trade
+    # with no strategy on it is *not* counted: attributing an unknown trade here would quietly put
+    # the smoke tests and anything opened by hand into the strategy's record.
+    live_trades = [t for t in live_trades if (t.strategy or "").startswith(run.strategy)]
+    live_points = [p for p in (_points(t.entry, t.exit, t.side, point) for t in live_trades) if p is not None]
+    live_hold = [
+        (t.closed_utc - t.opened_utc).total_seconds() / 3600 for t in live_trades if t.closed_utc and t.opened_utc
+    ]
+    live = _profile(live_points, live_hold, float(days))
+
+    report = DriftReport(
+        run_id=run_id,
+        strategy=run.strategy,
+        symbol=run.symbol,
+        generated_utc=moment,
+        days=days,
+        backtest_trades=len(bt_points),
+        live_trades=len(live_points),
+        live_slippage=round(sum(t.worst_slippage for t in live_trades) / len(live_trades), 2) if live_trades else 0.0,
+    )
+
+    def add(name: str, key: str, worse: bool, note: str = "") -> None:
+        report.metrics.append(Metric(name, backtest[key], live[key], worse and report.live_trades > 0, note))
+
+    wr_b, wr_l = backtest["win_rate"], live["win_rate"]
+    ex_b, ex_l = backtest["expectancy"], live["expectancy"]
+    tw_b, tw_l = backtest["trades_per_week"], live["trades_per_week"]
+    hold_b, hold_l = backtest["avg_hold_hours"], live["avg_hold_hours"]
+
+    add(
+        "win rate %",
+        "win_rate",
+        wr_b is not None and wr_l is not None and wr_l < wr_b - 10,
+        "10 points below the backtest is the line; anything less is ordinary variance",
+    )
+    add(
+        "expectancy, points per trade",
+        "expectancy",
+        ex_b is not None and ex_l is not None and (ex_l < 0 <= ex_b or (ex_b > 0 and ex_l < ex_b * 0.5)),
+        "the number that decides whether the edge survived contact with the broker",
+    )
+    add(
+        "trades per week",
+        "trades_per_week",
+        bool(tw_b) and bool(tw_l) and abs(tw_l - tw_b) > tw_b * 0.5,
+        "a different trade count means the live system is not seeing the same setups",
+    )
+    add("average win, points", "avg_win", False)
+    add("average loss, points", "avg_loss", False)
+    add(
+        "average hold, hours",
+        "avg_hold_hours",
+        bool(hold_b) and bool(hold_l) and abs(hold_l - hold_b) > hold_b * 0.5,
+        "exits firing at different times point at the stop or the data, not the idea",
+    )
+
+    if not report.live_trades:
+        report.notes.append(f"no closed live trades for {run.strategy} in the last {days} days; nothing to compare yet")
+    elif not report.meaningful:
+        report.notes.append(
+            f"only {report.live_trades} live trades. Below {DRIFT_MIN_TRADES} the differences below are noise, "
+            "and reading them as drift is how a working strategy gets changed for no reason (D11)"
+        )
+    if report.live_slippage >= SLIPPAGE_FLAG_POINTS:
+        report.notes.append(
+            f"average slippage {report.live_slippage} points; the backtest assumed "
+            f"{(run.costs or {}).get('slippage_points', '?')}. Slippage is an execution problem and it is actionable"
+        )
+    if report.meaningful and not report.diverging:
+        report.notes.append("live is tracking the backtest within the thresholds; nothing to look at")
+    return report
+
+
+def render_drift(report: DriftReport) -> str:
+    def cell(v: float | None) -> str:
+        return "—" if v is None else f"{v:g}"
+
+    lines = [
+        f"# Drift · {report.strategy} · {report.generated_utc:%Y-%m-%d}",
+        "",
+        f"Live over the last {report.days} days against stored backtest run #{report.run_id} "
+        f"({report.backtest_trades} trades). Everything is in points per trade, because lot sizes "
+        "differ between the two and comparing money would call that drift.",
+        "",
+    ]
+
+    if not report.meaningful:
+        lines += [
+            "## Read this first",
+            "",
+            f"**{report.live_trades} live trades is not enough to conclude anything** "
+            f"(the bar is {DRIFT_MIN_TRADES}). The table is below because the numbers are worth "
+            "watching accumulate, not because they mean something yet.",
+            "",
+        ]
+
+    lines += [
+        "## Live against backtest",
+        "",
+        "| metric | backtest | live | gap |",
+        "|---|---|---|---|",
+    ]
+    for m in report.metrics:
+        flag = " ⚠" if m.worse and report.meaningful else ""
+        lines.append(f"| {m.name}{flag} | {cell(m.backtest)} | {cell(m.live)} | {cell(m.gap)} |")
+    lines += ["", f"Average live slippage: {report.live_slippage} points.", ""]
+
+    diverging = report.diverging
+    lines += ["## What is diverging", ""]
+    if diverging:
+        for m in diverging:
+            lines.append(f"- **{m.name}**: backtest {cell(m.backtest)}, live {cell(m.live)}. {m.note}")
+    else:
+        lines.append("- nothing beyond the thresholds")
+    lines.append("")
+
+    if report.notes:
+        lines += ["## Notes", "", *[f"- {n}" for n in report.notes], ""]
+
+    lines += [
+        "## Proposals",
+        "",
+        "None, and deliberately so (D11). A gap here is a question, not an answer: slippage and "
+        "trade counts are execution problems and are actionable; a lower win rate over a small "
+        "sample is what a small sample looks like. Deciding that the market has changed needs "
+        "judgement across weeks, and a rule that guessed would relabel every losing month as a "
+        "regime change.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def write_drift(report: DriftReport, directory: str | Path = "reports") -> Path:
+    path = Path(directory)
+    path.mkdir(parents=True, exist_ok=True)
+    target = path / f"drift-{report.strategy}-{report.generated_utc:%Y-%m-%d}.md"
+    target.write_text(render_drift(report), encoding="utf-8")
+    return target

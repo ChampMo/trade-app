@@ -10,7 +10,17 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from tradeapp.journal.models import SCHEMA_VERSION, AICall, Base, Decision, Event, Order, SchemaVersion, State
+from tradeapp.journal.models import (
+    SCHEMA_VERSION,
+    AICall,
+    BacktestRun,
+    Base,
+    Decision,
+    Event,
+    Order,
+    SchemaVersion,
+    State,
+)
 
 SEVERITIES = ("INFO", "WARN", "CRIT")
 
@@ -145,7 +155,32 @@ class Journal:
                 setattr(row, k, v)
             s.commit()
 
+    def backtest(self, **fields: Any) -> int:
+        """Store one backtest run. Research that is not written down is research that repeats."""
+        fields.setdefault("ts_utc", utcnow())
+        with self._session() as s:
+            row = BacktestRun(**fields)
+            s.add(row)
+            s.commit()
+            return row.id
+
     # --- reads -------------------------------------------------------------------
+
+    def backtest_runs(self, limit: int = 20, strategy: str | None = None) -> list[BacktestRun]:
+        with self._session() as s:
+            q = select(BacktestRun).order_by(BacktestRun.id.desc()).limit(limit)
+            if strategy:
+                q = select(BacktestRun).where(BacktestRun.strategy == strategy).order_by(BacktestRun.id.desc())
+                q = q.limit(limit)
+            return list(s.execute(q).scalars())
+
+    def backtest_run(self, run_id: int) -> BacktestRun | None:
+        with self._session() as s:
+            return s.get(BacktestRun, run_id)
+
+    def latest_backtest(self, strategy: str) -> BacktestRun | None:
+        runs = self.backtest_runs(limit=1, strategy=strategy)
+        return runs[0] if runs else None
 
     def tail_events(self, n: int = 20) -> list[Event]:
         with self._session() as s:

@@ -328,10 +328,36 @@ def cmd_backtest(args: argparse.Namespace) -> int:
                 f"({w.test_trades} trades) {w.params}"
             )
 
+    mc = gates = None
     if s.trades:
         mc = monte_carlo(result.trades, result.start_balance, runs=args.monte_carlo)
+        gates = gate_report(result, mc, wf)
         print(f"montecarlo {mc.summary()}")
-        print(f"gates     {gate_report(result, mc, wf)}")
+        print(f"gates     {gates}")
+
+    if not args.no_save:
+        # Every run is evidence, including the disappointing ones — especially those. The drift
+        # report compares a live period against a stored run, and RESEARCH.md cites the id.
+        from tradeapp.backtest import save_run
+
+        settings = load_settings()
+        run_id = save_run(
+            Journal(settings.journal_path),
+            result,
+            strategy=args.strategy,
+            params={"tf": tf.value, "warmup": args.warmup},
+            costs={
+                "spread_points": args.spread,
+                "use_bar_spread": not args.flat_spread,
+                "slippage_points": args.slippage,
+                "commission_per_lot_round_trip": args.commission,
+            },
+            label=args.label,
+            walk_forward=wf,
+            monte_carlo=mc,
+            gates=gates,
+        )
+        print(f"saved     run #{run_id} in the journal; compare a live period with: report drift --run {run_id}")
     return 0
 
 
@@ -385,6 +411,44 @@ def cmd_report(args: argparse.Namespace) -> int:
                 f"{row['win_rate']:>9.1f}%{row['avg_slippage']:>9.2f}p"
             )
         print("\nIf the variant with the AI does not beat the one without it, that is an answer worth having (D9).")
+        return 0
+
+    if args.action == "runs":
+        runs = journal.backtest_runs(limit=args.days)
+        if not runs:
+            print("no stored backtest runs yet; run: python -m tradeapp backtest")
+            return 0
+        print(f"{'#':>4}  {'when':<16}{'strategy':<14}{'symbol':<9}{'tf':<5}{'trades':>7}{'net':>10}  label")
+        for r in runs:
+            st = r.stats or {}
+            print(
+                f"{r.id:>4}  {r.ts_utc:%Y-%m-%d %H:%M} {r.strategy:<14}{r.symbol:<9}{r.timeframe:<5}"
+                f"{st.get('trades', 0):>7}{st.get('net', 0.0):>10.2f}  {r.label or ''}"
+            )
+        return 0
+
+    if args.action == "drift":
+        run_id = args.run
+        if run_id is None:
+            if not args.strategy:
+                print("say which run to compare against: --run N, or --strategy NAME for its most recent")
+                return 2
+            latest = journal.latest_backtest(args.strategy)
+            if latest is None:
+                print(
+                    f"no stored backtest for {args.strategy}; run: python -m tradeapp backtest --strategy {args.strategy}"
+                )
+                return 1
+            run_id = latest.id
+        try:
+            drift = reports.build_drift(journal, run_id, days=args.days, point=args.point)
+        except KeyError as e:
+            print(e)
+            return 1
+        if args.write:
+            print(f"written to {reports.write_drift(drift, args.dir)}")
+        else:
+            print(reports.render_drift(drift))
         return 0
 
     report = reports.build(journal, args.day)
@@ -840,6 +904,8 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--walk-forward", action="store_true", help="also fit and test on rolling windows")
     bt.add_argument("--show-windows", type=int, default=8)
     bt.add_argument("--db", default="data/history.db")
+    bt.add_argument("--label", default=None, help="what this run was for, e.g. 'baseline before the ATR change'")
+    bt.add_argument("--no-save", action="store_true", help="do not store the run in the journal")
     bt.set_defaults(fn=cmd_backtest)
 
     lf = sub.add_parser("lifecycle", help="where each strategy stands on the way to real money")
@@ -851,13 +917,16 @@ def main(argv: list[str] | None = None) -> int:
     lf.add_argument("--db", default="data/history.db")
     lf.set_defaults(fn=cmd_lifecycle)
 
-    rp = sub.add_parser("report", help="daily post-mortem, and the A/B comparison by variant")
-    rp.add_argument("action", choices=["postmortem", "ab"])
+    rp = sub.add_parser("report", help="daily post-mortem, the A/B table, backtest runs and live-vs-backtest drift")
+    rp.add_argument("action", choices=["postmortem", "ab", "drift", "runs"])
     rp.add_argument("--day", default=None, help="YYYY-MM-DD, defaults to today")
     rp.add_argument("--days", type=int, default=30, help="lookback for the A/B table")
     rp.add_argument("--write", action="store_true", help="write to reports/ instead of printing")
     rp.add_argument("--dir", default="reports")
     rp.add_argument("--fake", action="store_true", help="read the simulated-runs journal")
+    rp.add_argument("--run", type=int, default=None, help="stored backtest run to compare against (drift)")
+    rp.add_argument("--strategy", default=None, help="use this strategy's most recent stored run (drift)")
+    rp.add_argument("--point", type=float, default=0.00001, help="symbol point, for reporting in points")
     rp.set_defaults(fn=cmd_report)
 
     nt = sub.add_parser("notify", help="prove the Telegram channel works before you need it")
