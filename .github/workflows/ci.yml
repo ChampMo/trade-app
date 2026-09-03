@@ -35,6 +35,8 @@ jobs:
       # --ignore-scripts skips Electron's ~100 MB binary download. CI runs vitest and a vite
       # build; neither needs the desktop shell, and installing it is the only part of this job
       # that depends on the network reaching a release server.
-      - run: npm ci --ignore-scripts
+      - run: node -v && npm -v && pwd && ls -la
+      - name: install
+        run: npm ci --ignore-scripts || { echo '--- npm debug log ---'; tail -n 60 "$HOME/.npm/_logs/"*.log; exit 1; }
       - run: npm test
       - run: npm run build
