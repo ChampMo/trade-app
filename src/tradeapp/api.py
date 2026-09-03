@@ -37,6 +37,9 @@ class MarketBody(BaseModel):
     symbol: str = Field(max_length=16)
     timeframe: str = Field(max_length=4)
     reason: str = Field(default="", max_length=200)
+    # How many bars to pull, for a sync. 0 means the loop's own default; the ceiling is what MT5
+    # will actually return in one call — asking for 200,000 comes back as "Invalid params".
+    bars: int = Field(default=0, ge=0, le=50_000)
 
 
 class BacktestBody(BaseModel):
@@ -262,6 +265,7 @@ def create_app(
             "trading": [
                 {"symbol": m.symbol, "timeframe": m.timeframe.value} for m in getattr(service.core, "markets", ())
             ],
+            "sync": service.history_status(),
         }
 
     @app.post("/markets/enable")
@@ -274,6 +278,22 @@ def create_app(
         """Stops new decisions there. Open positions keep their stops at the broker."""
         _book().disable(body.strategy, body.symbol.upper(), body.timeframe.upper(), body.reason)
         return markets()
+
+    @app.post("/markets/sync")
+    def market_sync(body: MarketBody) -> dict:
+        """Pull bars for a market so it can be backtested, and then attached.
+
+        The work happens on the loop's thread: MetaTrader5 allows one connection per process and
+        that connection belongs to the loop, so the API queues the job rather than fetching itself.
+        """
+        try:
+            tf = TF(body.timeframe.upper())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"unknown timeframe {body.timeframe}") from e
+        outcome = service.request_history_sync(body.symbol.upper(), tf, body.bars or None)
+        if not outcome.get("queued"):
+            raise HTTPException(status_code=409, detail=outcome.get("detail", "cannot sync now"))
+        return {**outcome, **markets()}
 
     @app.post("/markets/add")
     def market_add(body: MarketBody) -> dict:

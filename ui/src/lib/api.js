@@ -54,6 +54,7 @@ export const api = {
   markets: () => request("/markets"),
   marketEnable: (body) => request("/markets/enable", { method: "POST", body: JSON.stringify(body) }),
   marketDisable: (body) => request("/markets/disable", { method: "POST", body: JSON.stringify(body) }),
+  marketSync: (body) => request("/markets/sync", { method: "POST", body: JSON.stringify(body) }),
   marketAdd: (body) => request("/markets/add", { method: "POST", body: JSON.stringify(body) }),
   marketRemove: (body) => request("/markets/remove", { method: "POST", body: JSON.stringify(body) }),
   runs: (limit = 25, strategy) =>

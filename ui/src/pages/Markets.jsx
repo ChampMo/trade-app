@@ -44,6 +44,10 @@ export default function Markets({ status }) {
   };
 
   const rows = body?.markets ?? [];
+  const sync = body?.sync ?? { pending: [], results: {} };
+  const syncKey = `${form.symbol} ${form.timeframe}`;
+  const pending = sync.pending?.includes(syncKey);
+  const result = sync.results?.[syncKey];
   const trading = new Set((body?.trading ?? []).map((m) => `${m.symbol}|${m.timeframe}`));
   const strategies = [...new Set(rows.map((r) => r.strategy))];
 
@@ -178,14 +182,42 @@ export default function Markets({ status }) {
               ))}
             </select>
           </label>
-          <button
-            className="btn"
-            disabled={busy || !form.strategy || !form.symbol}
-            onClick={() => act(api.marketAdd, form)}
-          >
-            Attach
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="btn flex-1"
+              disabled={busy || !form.symbol || pending}
+              onClick={() => act(api.marketSync, { ...form, bars: 50000 })}
+            >
+              {pending ? "syncing…" : "Sync history"}
+            </button>
+            <button
+              className="btn flex-1"
+              disabled={busy || !form.strategy || !form.symbol}
+              onClick={() => act(api.marketAdd, form)}
+            >
+              Attach
+            </button>
+          </div>
         </div>
+
+        {(pending || result) && (
+          <p className="text-xs border-l-4 border-line pl-2 py-1">
+            {pending ? (
+              <span className="text-muted">
+                {syncKey}: queued. The loop pulls it on its next tick — a few seconds.
+              </span>
+            ) : result?.state === "done" ? (
+              <span className="text-pos">
+                {syncKey}: {result.stored} new bar(s), {result.total?.toLocaleString()} stored. Attach it now, then
+                backtest it before letting it run.
+              </span>
+            ) : (
+              <span className="text-neg">
+                {syncKey}: {result?.error || "the sync did not finish"}
+              </span>
+            )}
+          </p>
+        )}
 
         {error && (
           <p className="text-xs text-neg border-l-4 border-neg pl-2 py-1">
@@ -204,11 +236,9 @@ export default function Markets({ status }) {
           </p>
           <p>
             It is refused outright if there are no stored bars for that market: a market that cannot be backtested
-            can never climb the ladder. Sync the history first:
+            can never climb the ladder. <b>Sync history</b> fetches them through the running core — the loop owns the
+            only MetaTrader connection this process has, so it does the pull on its next tick.
           </p>
-          <pre className="font-mono bg-paper border-[1.5px] border-line rounded p-2 overflow-x-auto">
-python -m tradeapp data sync --symbol GBPUSD --tf H4
-          </pre>
           <p>
             Then backtest it before letting it run:{" "}
             <span className="font-mono">Research → strategy, symbol, timeframe → Run backtest</span>. Look at the

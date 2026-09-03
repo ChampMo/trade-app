@@ -377,3 +377,37 @@ def test_attaching_a_market_with_history_works_and_is_journaled(client, journal:
 def test_an_unknown_strategy_cannot_be_given_a_market(client):
     r = client.post("/markets/add", json={"strategy": "ghost", "symbol": "GBPUSD", "timeframe": "H4"})
     assert r.status_code == 400 and "no strategy called" in r.json()["detail"]
+
+
+def test_a_market_can_be_synced_from_the_page(client, tmp_path):
+    """The refusal to attach without history is only fair if the fix is one click away."""
+    from tradeapp.data import BarStore
+
+    client.runner.history_db = str(tmp_path / "history.db")
+    client.service.core.history = BarStore(tmp_path / "history.db")
+
+    payload = {"strategy": "always_long", "symbol": "EURUSD", "timeframe": "M15"}
+    body = client.post("/markets/sync", json=payload).json()
+
+    assert body["queued"] is True
+    assert "EURUSD M15" in body["sync"]["pending"] or body["sync"]["results"].get("EURUSD M15")
+
+
+def test_a_core_that_cannot_sync_says_so_through_the_api(client):
+    """No store means a simulated broker; its invented bars must not reach the research history."""
+    client.service.core.history = None
+
+    payload = {"strategy": "always_long", "symbol": "EURUSD", "timeframe": "M15"}
+    r = client.post("/markets/sync", json=payload)
+
+    assert r.status_code == 409 and "simulated broker" in r.json()["detail"]
+
+
+def test_syncing_an_unknown_timeframe_is_refused(client):
+    r = client.post("/markets/sync", json={"strategy": "always_long", "symbol": "EURUSD", "timeframe": "H7"})
+    assert r.status_code == 400
+
+
+def test_the_markets_view_carries_the_sync_state(client):
+    body = client.get("/markets").json()
+    assert "sync" in body and "pending" in body["sync"] and "results" in body["sync"]

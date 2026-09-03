@@ -207,6 +207,18 @@ class CoreService:
             state = self.core.kill.resume()
         return {"state": state.value}
 
+    def request_history_sync(self, symbol: str, timeframe, count: int | None = None) -> dict:
+        """Queue a history pull for the loop. Goes through the lock like every other change."""
+        with self._lock:
+            return self.core.request_history_sync(symbol, timeframe, count)
+
+    def history_status(self) -> dict:
+        with self._lock:
+            return {
+                "pending": [str(m) for m in self.core.history_requests],
+                "results": dict(self.core.history_results),
+            }
+
     @property
     def engine_state(self) -> EngineState:
         with self._lock:

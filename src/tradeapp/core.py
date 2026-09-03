@@ -141,6 +141,12 @@ class Core:
         # running, by the owner through the Markets page (D29).
         self.markets: tuple[Market, ...] = self.config.market_list
         self.market_state: dict[Market, dict] = {}
+        # Sync jobs asked for from the UI. The MetaTrader5 package allows one connection per
+        # process and that connection belongs to this loop, so the API cannot fetch bars
+        # itself: it leaves the request here and the loop does the work on its next tick.
+        self.history_requests: list[Market] = []
+        self.history_results: dict[str, dict] = {}
+        self.history_counts: dict[Market, int] = {}
         self.market_book = market_book
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)
 
@@ -268,8 +274,9 @@ class Core:
             report.note("no fresh view of the account; not opening anything this tick")
             return report
 
-        # 3b. keep the stored bars current, on their own slow timer. After the brake, so a slow
-        # fetch can never delay it, and only on a healthy tick.
+        # 3b. keep the stored bars current, on their own slow timer, and do anything the UI has
+        # asked for. After the brake, so a slow fetch can never delay it, and only on a healthy tick.
+        self._drain_history_requests(now, report)
         if self._history_due(now):
             self._sync_history(now, report)
 
@@ -522,6 +529,56 @@ class Core:
             except Exception as e:  # noqa: BLE001 - one unknown symbol must not stop the others
                 self.journal.event("WARN", SOURCE, "no symbol info", {"symbol": market.symbol, "error": str(e)})
         return out
+
+    MAX_HISTORY_REQUESTS = 8
+
+    def request_history_sync(self, symbol: str, timeframe: TF, count: int | None = None) -> dict:
+        """Ask the loop to pull bars for one market. Returns what the caller should show.
+
+        Refused when there is no store to write to — a simulated broker's bars are invented and
+        must never reach the history the research reads (D28).
+        """
+        if self.history is None:
+            return {"queued": False, "detail": "this core has no history store; a simulated broker cannot sync"}
+        market = Market(symbol.upper(), timeframe)
+        if market in self.history_requests:
+            return {"queued": True, "detail": f"{market} is already in the queue"}
+        if len(self.history_requests) >= self.MAX_HISTORY_REQUESTS:
+            return {"queued": False, "detail": "too many syncs already queued; wait for them to finish"}
+        self.history_requests.append(market)
+        if count:
+            self.history_counts[market] = count
+        self.history_results[str(market)] = {"state": "queued", "asked_utc": self._now().isoformat()}
+        self.journal.event("INFO", SOURCE, f"history sync requested for {market}", {"count": count})
+        return {"queued": True, "detail": f"{market} will be pulled on the next tick"}
+
+    def _drain_history_requests(self, now: datetime, report: TickReport) -> None:
+        """Do the syncs the UI asked for. One per tick, so a big pull cannot stall the loop."""
+        if self.history is None or not self.history_requests:
+            return
+        market = self.history_requests.pop(0)
+        key = str(market)
+        wanted = self.history_counts.pop(market, None) or self.config.sync_history_bars
+        try:
+            result = self.history.sync_from_broker(self.broker, market.symbol, market.timeframe, count=wanted)
+        except Exception as e:  # noqa: BLE001 - a failed sync is a recorded result, never a stop
+            self.history_results[key] = {"state": "failed", "error": str(e), "at_utc": now.isoformat()}
+            self.journal.event("WARN", SOURCE, f"requested history sync failed for {market}", {"error": str(e)})
+            report.note(f"history sync failed for {market}: {e}")
+            return
+        self.history_results[key] = {
+            "state": "done",
+            "stored": result.stored,
+            "total": result.total,
+            "at_utc": now.isoformat(),
+        }
+        self.journal.event(
+            "INFO",
+            SOURCE,
+            f"history synced on request: {result.stored} new bar(s) for {market}",
+            {"stored": result.stored, "total": result.total},
+        )
+        report.note(f"history {market}: {result.stored} new bar(s), {result.total} stored")
 
     def _history_due(self, now: datetime) -> bool:
         if self.history is None or self.config.sync_history_every_s <= 0:

@@ -118,3 +118,92 @@ def test_no_store_means_no_sync(journal: Journal):
 
     assert core._history_due(datetime.now(UTC)) is False
     assert not any("history " in n for n in core.tick().notes)
+
+
+# --- syncs asked for from the UI ---------------------------------------------------------------
+#
+# The UI cannot fetch bars itself: MetaTrader5 allows one connection per process and it belongs to
+# the loop. So the API leaves a request and the loop does the work, which also means a failed
+# request has to be a recorded result rather than an exception on somebody's thread.
+
+
+def test_a_requested_sync_is_done_on_the_next_tick(journal: Journal, tmp_path):
+    store = BarStore(tmp_path / "history.db")
+    core = build(journal, store, Clock(), every_s=0.0)  # the timer is off; only the request runs
+    core.start()
+
+    queued = core.request_history_sync("EURUSD", TF.M15)
+    assert queued["queued"] is True
+
+    report = core.tick()
+
+    assert store.count("EURUSD", TF.M15) > 0
+    assert core.history_results["EURUSD M15"]["state"] == "done"
+    assert any("EURUSD M15" in n for n in report.notes)
+    assert core.history_requests == []
+
+
+def test_the_same_market_is_not_queued_twice(journal: Journal, tmp_path):
+    core = build(journal, BarStore(tmp_path / "history.db"), Clock())
+    core.start()
+
+    core.request_history_sync("EURUSD", TF.M15)
+    second = core.request_history_sync("EURUSD", TF.M15)
+
+    assert second["queued"] is True and "already in the queue" in second["detail"]
+    assert len(core.history_requests) == 1
+
+
+def test_the_queue_has_a_ceiling(journal: Journal, tmp_path):
+    """A page with a button on it must not be able to ask for unbounded work."""
+    core = build(journal, BarStore(tmp_path / "history.db"), Clock())
+    core.start()
+
+    for i in range(core.MAX_HISTORY_REQUESTS):
+        core.request_history_sync(f"PAIR{i}", TF.M15)
+    refused = core.request_history_sync("ONEMORE", TF.M15)
+
+    assert refused["queued"] is False and "too many" in refused["detail"]
+
+
+def test_a_core_with_no_store_refuses_rather_than_inventing_bars(journal: Journal):
+    """A simulated broker's bars must never reach the history the research reads (D28)."""
+    broker = FakeBroker(behavior=FakeBehavior())
+    broker.seed_bars(bars_ending(NOW - timedelta(hours=4)))
+    runtime = StrategyRuntime(journal)
+    runtime.register(Quiet())
+    core = Core(broker, journal, runtime=runtime, config=CoreConfig(), now=lambda: NOW, sleep=NO_SLEEP)
+
+    outcome = core.request_history_sync("EURUSD", TF.M15)
+
+    assert outcome["queued"] is False and "simulated broker" in outcome["detail"]
+
+
+def test_a_failed_request_is_a_result_not_a_crash(journal: Journal, tmp_path):
+    class Grumpy(BarStore):
+        def sync_from_broker(self, *a, **kw):
+            raise RuntimeError("terminal busy")
+
+    core = build(journal, Grumpy(tmp_path / "history.db"), Clock(), every_s=0.0)
+    core.start()
+    core.request_history_sync("EURUSD", TF.M5)
+
+    report = core.tick()
+
+    assert core.kill.state.value == "RUNNING"
+    assert core.history_results["EURUSD M5"]["state"] == "failed"
+    assert any("EURUSD M5" in n for n in report.notes)
+
+
+def test_only_one_request_is_done_per_tick(journal: Journal, tmp_path):
+    """A big pull must not stall the loop, and two of them must not stall it twice as long."""
+    core = build(journal, BarStore(tmp_path / "history.db"), Clock(), every_s=0.0)
+    core.start()
+    core.request_history_sync("EURUSD", TF.M15)
+    core.request_history_sync("EURUSD", TF.M5)
+
+    core.tick()
+    assert len(core.history_requests) == 1
+
+    core.tick()
+    assert core.history_requests == []
