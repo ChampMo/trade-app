@@ -2,10 +2,14 @@ import React, { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Card, Empty, Pill, SeverityPill, Stat, StatePill } from "../components";
 import { bothClocks, money, signed, utc } from "../lib/format";
+import { PriceChart } from "../charts";
 
 export default function Dashboard({ status, live }) {
   const [positions, setPositions] = useState([]);
   const [ticks, setTicks] = useState([]);
+  const [picked, setPicked] = useState(null);
+  const [bars, setBars] = useState(null);
+  const [decisions, setDecisions] = useState([]);
 
   useEffect(() => {
     const load = async () => {
@@ -22,6 +26,38 @@ export default function Dashboard({ status, live }) {
   }, []);
 
   const recent = live.slice(-8).reverse();
+
+  // One market at a time. The account-wide cards above are the same whatever is selected; below
+  // them is that market's own price, its own positions and its own decisions.
+  const markets = status?.markets ?? [];
+  const market = markets.find((m) => `${m.symbol}|${m.timeframe}` === picked) ?? markets[0];
+
+  useEffect(() => {
+    if (!market) return undefined;
+    let alive = true;
+    const load = async () => {
+      try {
+        const body = await api.bars({
+          symbol: market.symbol,
+          timeframe: market.timeframe,
+          start: "",
+          end: "",
+          limit: 120,
+        });
+        if (alive) setBars(body.bars);
+        const rows = await api.decisions(60);
+        if (alive) setDecisions(rows.filter((d) => d.symbol === market.symbol));
+      } catch {
+        if (alive) setBars([]);
+      }
+    };
+    load();
+    const timer = setInterval(load, 10000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [market?.symbol, market?.timeframe]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -70,6 +106,83 @@ export default function Dashboard({ status, live }) {
           </div>
         </Card>
       </div>
+
+      {markets.length > 0 && (
+        <Card
+          title="Market"
+          right={
+            <div className="flex gap-1">
+              {markets.map((m) => {
+                const key = `${m.symbol}|${m.timeframe}`;
+                const on = market && key === `${market.symbol}|${market.timeframe}`;
+                return (
+                  <button
+                    key={key}
+                    className={`btn ${on ? "bg-ink text-white" : ""}`}
+                    onClick={() => setPicked(key)}
+                  >
+                    {m.symbol} {m.timeframe}
+                  </button>
+                );
+              })}
+            </div>
+          }
+        >
+          {market && (
+            <>
+              <div className="flex gap-6 flex-wrap">
+                <Stat label="Bid" value={market.bid ?? "—"} />
+                <Stat label="Ask" value={market.ask ?? "—"} />
+                <Stat label="Spread" value={market.spread_points != null ? `${market.spread_points} pt` : "—"} />
+                <Stat label="Last closed bar" value={utc(market.last_bar_utc, true)} />
+                <Stat label="Open here" value={positions.filter((p) => p.symbol === market.symbol).length} />
+              </div>
+              <PriceChart bars={bars} digits={market.digits ?? 5} />
+              <div className="text-xs text-muted">
+                Prices are read every tick; the bar chart is the stored history the backtests replay, so what you see
+                here is what a replay of this market would see.
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
+      {market && (
+        <Card title={`Decisions on ${market.symbol}`} right={`${decisions.length} recent`}>
+          {decisions.length === 0 ? (
+            <Empty>nothing decided on this market yet</Empty>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  {["When (UTC)", "Strategy", "Side", "Verdict", "Why"].map((h) => (
+                    <th key={h} className="th">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {decisions.slice(0, 12).map((d) => (
+                  <tr key={d.id}>
+                    <td className="td">{utc(d.ts_utc, true)}</td>
+                    <td className="td">{d.strategy_id}</td>
+                    <td className="td">{d.side || "—"}</td>
+                    <td className="td">
+                      <SeverityPill severity={d.verdict === "APPROVED" ? "INFO" : "WARN"} />
+                    </td>
+                    <td className="td text-muted">{(d.verdict_reason || "").slice(0, 70)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="text-xs text-muted">
+            Every decision is here, the refused ones included — this is where the answer to &quot;why did it not
+            trade&quot; lives.
+          </p>
+        </Card>
+      )}
 
       <div className="grid grid-cols-[2fr_1fr] gap-4">
         <Card title="Open positions" right={`${positions.length} open`}>

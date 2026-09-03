@@ -169,3 +169,67 @@ function Marker({ x, y, side, label }) {
     </g>
   );
 }
+
+const MINI = { w: 900, h: 180, left: 52, right: 12, top: 10, bottom: 16 };
+
+/** Recent bars for one market, with the last close called out. No trade, no markers, no fuss. */
+export function PriceChart({ bars, digits = 5 }) {
+  if (!bars) return <div className="text-xs text-muted py-6 text-center">loading bars…</div>;
+  if (!bars.length) return <div className="text-xs text-muted py-6 text-center">no stored bars for this market</div>;
+
+  const innerW = MINI.w - MINI.left - MINI.right;
+  const innerH = MINI.h - MINI.top - MINI.bottom;
+  const highs = bars.map((b) => b.h);
+  const lows = bars.map((b) => b.l);
+  const y = scaler(pad(extent([...highs, ...lows]), 0.05), innerH, true);
+  const x = scaler([0, Math.max(1, bars.length - 1)], innerW);
+  const last = bars[bars.length - 1];
+  const width = Math.max(1.5, (innerW / bars.length) * 0.62);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <svg viewBox={`0 0 ${MINI.w} ${MINI.h}`} className="w-full" role="img" aria-label="recent bars">
+        <g transform={`translate(${MINI.left},${MINI.top})`}>
+          <line
+            x1="0"
+            y1={y(last.c)}
+            x2={innerW}
+            y2={y(last.c)}
+            className="stroke-line"
+            strokeDasharray="3 3"
+            strokeWidth="1"
+          />
+          {bars.map((b, i) => {
+            const cx = x(i);
+            const up = b.c >= b.o;
+            return (
+              <g key={b.t} className={up ? "stroke-pos fill-pos" : "stroke-neg fill-neg"}>
+                <line x1={cx} y1={y(b.h)} x2={cx} y2={y(b.l)} strokeWidth="1" />
+                <rect
+                  x={cx - width / 2}
+                  y={Math.min(y(b.o), y(b.c))}
+                  width={width}
+                  height={Math.max(1, Math.abs(y(b.o) - y(b.c)))}
+                  fillOpacity={up ? 0.25 : 1}
+                  strokeWidth="1"
+                />
+              </g>
+            );
+          })}
+          <line x1="0" y1={innerH} x2={innerW} y2={innerH} className="stroke-ink" strokeWidth="1" />
+        </g>
+        <text x="4" y={MINI.top + 8} className="fill-muted" fontSize="9" fontFamily="ui-monospace, monospace">
+          {Math.max(...highs).toFixed(digits)}
+        </text>
+        <text x="4" y={MINI.top + innerH} className="fill-muted" fontSize="9" fontFamily="ui-monospace, monospace">
+          {Math.min(...lows).toFixed(digits)}
+        </text>
+      </svg>
+      <div className="flex justify-between text-[11px] text-muted font-mono">
+        <span>{utc(bars[0].t, true)}</span>
+        <span>{bars.length} bars</span>
+        <span>{utc(last.t, true)}</span>
+      </div>
+    </div>
+  );
+}

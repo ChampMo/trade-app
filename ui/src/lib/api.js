@@ -61,11 +61,13 @@ export const api = {
   run: (id) => request(`/backtest/runs/${id}`),
   drift: (id, days = 30) => request(`/backtest/runs/${id}/drift?days=${days}`),
   backtestOptions: () => request("/backtest/options"),
-  bars: ({ symbol, timeframe, start, end, limit = 400 }) =>
-    request(
-      `/bars?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}` +
-        `&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&limit=${limit}`,
-    ),
+  bars: ({ symbol, timeframe, start, end, limit = 400 }) => {
+    // start/end are optional: without them the core returns the most recent `limit` bars.
+    const q = new URLSearchParams({ symbol, timeframe, limit: String(limit) });
+    if (start) q.set("start", start);
+    if (end) q.set("end", end);
+    return request(`/bars?${q}`);
+  },
   jobs: () => request("/backtest/jobs"),
   job: (id) => request(`/backtest/jobs/${id}`),
   startBacktest: (body) => request("/backtest", { method: "POST", body: JSON.stringify(body) }),

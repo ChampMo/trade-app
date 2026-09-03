@@ -140,6 +140,7 @@ class Core:
         # What the loop is trading right now. Starts from the config and can be changed while
         # running, by the owner through the Markets page (D29).
         self.markets: tuple[Market, ...] = self.config.market_list
+        self.market_state: dict[Market, dict] = {}
         self.market_book = market_book
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)
 
@@ -554,13 +555,25 @@ class Core:
     def _context(self, market: Market, now: datetime) -> Context | None:
         try:
             bars = self.broker.bars(market.symbol, market.timeframe, self.config.history_bars)
+            tick = self.broker.tick(market.symbol)
+            info = self.broker.symbol_info(market.symbol)
+            # What the dashboard shows for this market. Written every tick, not only on a new bar,
+            # because a price that only moved when a bar closed would look frozen for four hours.
+            self.market_state[market] = {
+                "bid": tick.bid,
+                "ask": tick.ask,
+                "spread_points": info.spread_points,
+                "digits": info.digits,
+                "seen_utc": now.isoformat(),
+                "bars": len(bars),
+            }
             return Context(
                 symbol=market.symbol,
                 timeframe=market.timeframe,
                 bars=bars,
                 now_utc=now,
-                tick=self.broker.tick(market.symbol),
-                symbol_info=self.broker.symbol_info(market.symbol),
+                tick=tick,
+                symbol_info=info,
                 ai=self.analyst.view if self.analyst is not None else AIContext.neutral(),
             )
         except Exception as e:  # noqa: BLE001
@@ -584,6 +597,7 @@ class Core:
                     "symbol": m.symbol,
                     "timeframe": m.timeframe.value,
                     "last_bar_utc": self._last_bars[m].isoformat() if m in self._last_bars else None,
+                    **self.market_state.get(m, {}),
                 }
                 for m in self.markets
             ],
