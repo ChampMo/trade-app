@@ -328,3 +328,35 @@ def evidence_from_backtest(result, monte_carlo=None, walk_forward=None, costs_mo
         monte_carlo_p95_drawdown_pct=monte_carlo.drawdown_p95 if monte_carlo else None,
         walk_forward_efficiency=walk_forward.efficiency if walk_forward else None,
     )
+
+
+# --- who is allowed to trade, and where (D26) --------------------------------------------------
+
+REAL_MONEY_STAGES = (LifecycleState.LIVE_SMALL, LifecycleState.LIVE)
+
+
+def may_trade(state: LifecycleState, *, real_money: bool) -> bool:
+    """The ladder as a runtime rule, not just a report.
+
+    Everything above was about *promoting* a strategy. None of it meant anything while the loop
+    registered every strategy it could find regardless of stage: the gates described a ladder that
+    nothing was actually made to climb.
+
+    Two rules, and deliberately only two:
+
+    - **retired never trades**, anywhere. That is what retiring is.
+    - **real money needs `live_small` or `live`.** Not demo, not paper, not a backtest — money.
+
+    Demo stays open on purpose. Demo is where a strategy earns the evidence the gates ask for, and
+    a rule that refused to run anything below `forward` on demo would leave no way to reach
+    `forward` at all. What demo is not allowed to do is stay quiet about it: the loop journals a
+    warning naming every strategy running below its gate, and the UI shows the stage next to it.
+    """
+    if state is LifecycleState.RETIRED:
+        return False
+    return state in REAL_MONEY_STAGES if real_money else True
+
+
+def below_forward(state: LifecycleState) -> bool:
+    """True while a strategy has not yet earned a place on a demo account with frozen parameters."""
+    return state in (LifecycleState.RESEARCH, LifecycleState.BACKTESTED)

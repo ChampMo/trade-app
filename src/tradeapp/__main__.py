@@ -608,13 +608,54 @@ def cmd_calendar(args: argparse.Namespace) -> int:
     return 0
 
 
+def _register_allowed(runtime, wanted, settings, journal, *, fake: bool) -> list[str]:
+    """Register only what its lifecycle stage allows to trade here (D26).
+
+    The gates in `lifecycle.py` described a ladder that nothing was made to climb: the loop
+    registered every strategy it could find. Real money now needs `live_small` or `live`, retired
+    never trades anywhere, and anything below `forward` on a demo account is allowed but says so.
+    """
+    from tradeapp.lifecycle import Lifecycle, LifecycleState, below_forward, may_trade
+    from tradeapp.strategies import create
+
+    states = Lifecycle(journal).all_states()
+    allowed: list[str] = []
+    for sid in wanted:
+        try:
+            state = LifecycleState(states.get(sid, LifecycleState.RESEARCH.value))
+        except ValueError:
+            state = LifecycleState.RESEARCH
+        if not may_trade(state, real_money=settings.live_enabled):
+            print(f"REFUSED   {sid} is {state.value}; real money needs live_small or live")
+            journal.event(
+                "CRIT",
+                "lifecycle",
+                f"refusing to run {sid} on real money at stage {state.value}",
+                {"strategy": sid, "state": state.value},
+            )
+            continue
+        if below_forward(state) and not fake:
+            print(f"warning   {sid} is {state.value}, below the forward gate; results prove nothing yet")
+            journal.event(
+                "WARN",
+                "lifecycle",
+                f"{sid} is running at stage {state.value}, below the forward gate",
+                {"strategy": sid, "state": state.value},
+            )
+        runtime.register(create(sid))
+        allowed.append(sid)
+    if not allowed:
+        journal.event("CRIT", "lifecycle", "no strategy is allowed to trade here", {"wanted": wanted})
+    return allowed
+
+
 def _build_core(settings, args, journal):
     """Assemble broker + strategies + core the same way for `run` and `serve`."""
     from tradeapp.contracts import TF
     from tradeapp.core import Core, CoreConfig
     from tradeapp.risk import RiskLimits
     from tradeapp.runtime import StrategyRuntime
-    from tradeapp.strategies import create, discover
+    from tradeapp.strategies import discover
 
     tf = TF(args.tf.upper())
     if args.fake:
@@ -629,9 +670,8 @@ def _build_core(settings, args, journal):
         broker = PaperBroker(broker, balance=args.balance)
 
     runtime = StrategyRuntime(journal)
-    ids = [args.strategy] if args.strategy else sorted(discover())
-    for sid in ids:
-        runtime.register(create(sid))
+    wanted = [args.strategy] if args.strategy else sorted(discover())
+    ids = _register_allowed(runtime, wanted, settings, journal, fake=args.fake)
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
     analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
