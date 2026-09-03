@@ -45,6 +45,11 @@ class CoreConfig:
     timeframe: TF = TF.H4
     history_bars: int = 300
     reconcile_every_s: float = 60.0
+    # Keeping the stored bars current, so a backtest run tomorrow covers up to yesterday and the
+    # drift report compares like with like. 0 turns it off, which is what a simulated broker gets:
+    # its bars are invented and have no business in the history the research reads.
+    sync_history_every_s: float = 0.0
+    sync_history_bars: int = 5000
     tick_interval_s: float = 5.0
     calendar_db: str = "data/calendar.db"
 
@@ -82,6 +87,7 @@ class Core:
         news=None,
         analyst=None,
         notifier=None,
+        history=None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -105,6 +111,7 @@ class Core:
         self.executor = Executor(broker, journal, now=now, sleep=sleep)
         self.reconciler = Reconciler(broker, journal, now=now)
         self.analyst = analyst
+        self.history = history
         self.kill = KillSwitch(KillLimits.from_risk(self.limits), journal=journal, notifier=notifier)
 
         self.account: AccountInfo | None = None
@@ -117,6 +124,7 @@ class Core:
         self._day_key: str | None = None
         self.last_bar_utc: datetime | None = None
         self.last_reconcile_at: datetime | None = None
+        self.last_history_sync_at: datetime | None = None
         self.started = False
 
     # --- lifecycle ----------------------------------------------------------------
@@ -226,6 +234,11 @@ class Core:
             # position list. Opening against a stale one is worse than missing a bar.
             report.note("no fresh view of the account; not opening anything this tick")
             return report
+
+        # 3b. keep the stored bars current, on their own slow timer. After the brake, so a slow
+        # fetch can never delay it, and only on a healthy tick.
+        if self._history_due(now):
+            self._sync_history(now, report)
 
         # 4. is there a new closed bar to act on
         ctx = self._context(now)
@@ -415,6 +428,34 @@ class Core:
     def _reconcile(self, force: bool = False) -> None:
         self.reconciler.run()
         self.last_reconcile_at = self._now()
+
+    def _history_due(self, now: datetime) -> bool:
+        if self.history is None or self.config.sync_history_every_s <= 0:
+            return False
+        if self.last_history_sync_at is None:
+            return True
+        return (now - self.last_history_sync_at).total_seconds() >= self.config.sync_history_every_s
+
+    def _sync_history(self, now: datetime, report: TickReport) -> None:
+        """Pull recent bars into the store. Never raises: stale history is a research problem,
+        not a trading one, and it must not be able to stop the loop."""
+        self.last_history_sync_at = now
+        try:
+            result = self.history.sync_from_broker(
+                self.broker, self.config.symbol, self.config.timeframe, count=self.config.sync_history_bars
+            )
+        except Exception as e:  # noqa: BLE001 - the loop keeps trading on yesterday's history
+            self.journal.event("WARN", SOURCE, "could not sync history", {"error": str(e)})
+            report.note(f"history sync failed: {e}")
+            return
+        if result.stored:
+            self.journal.event(
+                "INFO",
+                SOURCE,
+                f"history synced: {result.stored} new bar(s) for {self.config.symbol} {self.config.timeframe.value}",
+                {"stored": result.stored, "total": result.total},
+            )
+        report.note(f"history: {result.stored} new bar(s), {result.total} stored")
 
     def _context(self, now: datetime) -> Context | None:
         try:

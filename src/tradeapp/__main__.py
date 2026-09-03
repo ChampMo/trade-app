@@ -700,6 +700,14 @@ def _build_core(settings, args, journal):
     analyst = _analyst(settings, journal, quiet=False) if getattr(args, "ai", False) else None
     notifier = _telegram(settings, journal, quiet=False) if getattr(args, "telegram", False) else None
 
+    # A simulated broker's bars are invented and must never reach the history the research reads,
+    # so syncing is real-broker only.
+    history = None
+    if not args.fake:
+        from tradeapp.data import BarStore
+
+        history = BarStore(settings.history_path)
+
     core = Core(
         broker,
         journal,
@@ -709,7 +717,9 @@ def _build_core(settings, args, journal):
             timeframe=tf,
             tick_interval_s=args.interval,
             reconcile_every_s=args.reconcile_every,
+            sync_history_every_s=0.0 if args.fake else float(getattr(args, "sync_history", 0) or 0) * 3600,
         ),
+        history=history,
         limits=RiskLimits(),
         news=news,
         analyst=analyst,
@@ -1100,6 +1110,13 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--ai", action="store_true", help="let the DeepSeek analyst set bias/size/block")
     sv.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     sv.add_argument("--fake", action="store_true", help="simulated broker, no MT5 at all")
+    sv.add_argument(
+        "--sync-history",
+        type=float,
+        default=6.0,
+        metavar="HOURS",
+        help="pull recent bars into data/history.db this often; 0 turns it off",
+    )
     sv.set_defaults(fn=cmd_serve)
 
     rn = sub.add_parser("run", help="start the trading loop (this one really trades)")
@@ -1114,6 +1131,13 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--paper", action="store_true", help="live prices, imaginary fills; nothing is sent")
     rn.add_argument("--balance", type=float, default=10_000.0, help="starting balance for paper mode")
     rn.add_argument("--fake", action="store_true", help="drive a simulated broker instead of MT5")
+    rn.add_argument(
+        "--sync-history",
+        type=float,
+        default=6.0,
+        metavar="HOURS",
+        help="pull recent bars into data/history.db this often; 0 turns it off",
+    )
     rn.set_defaults(fn=cmd_run)
 
     rc = sub.add_parser("reconcile", help="compare broker positions against the journal")

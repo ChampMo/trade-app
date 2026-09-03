@@ -33,7 +33,7 @@ AI layer (DeepSeek, Phase 3) feeds Context only: regime / bias / size_mult / blo
 - `src/tradeapp/notify.py` — Telegram. Outbound never raises; inbound trusts exactly one chat id. `/kill` works from a phone, `/unlock` deliberately does not.
 - `src/tradeapp/calendar.py` — economic calendar and news windows. **No LLM**: release times are known in advance, so this is a rule, not a prediction. Feeds in by file or by a URL the owner chose; there is deliberately no default.
 - `src/tradeapp/lifecycle.py` — D3's gates as code that refuses. No force parameter; a parameter change demotes to research.
-- `src/tradeapp/data.py` — SQLite bar store. Upsert by time, weekend-aware gap report.
+- `src/tradeapp/data.py` — SQLite bar store. Upsert by time, weekend-aware gap report. The loop refreshes it on its own slow timer (`serve --sync-history HOURS`, 6 by default, never in `--fake`) so research and the drift report do not quietly fall behind the market.
 - `src/tradeapp/api.py` + `service.py` — the local API (D7) and the thread that runs the loop behind it. Localhost only, no auth, and `serve` refuses a non-loopback host because `/control/kill` is one POST away. Journal timestamps go out with an explicit `+00:00`: without it a browser reads them as local time and the whole UI shifts by the machine's zone (D13). `research.py` runs backtests for the UI on one worker thread — one at a time, never raising into the loop, and with no route to the broker.
 - `src/tradeapp/broker/paper.py` — live prices, imaginary fills. Nothing leaves the machine.
 - `src/tradeapp/core.py` — **the loop**, and the one place everything is wired together. Order is safety first: read the account, reconcile on a timer, let the kill switch fire, and only then look for a new closed bar. A tick that finds trouble never reaches the trading step. Peak and day-start equity live in the journal's `state` table so a restart cannot erase the drawdown history (D21).
@@ -80,10 +80,11 @@ python -m tradeapp serve --paper  # loop + API, live prices, nothing sent
 python -m tradeapp serve          # loop + API, real orders
 python -m tradeapp smoke --fake   # full smoke flow against FakeBroker (no MT5 needed)
 python -m tradeapp smoke          # real smoke on the DEMO account: open 0.01 lot, verify SL, close
-python -m tradeapp data sync      # pull history from MT5 into data/history.db
+python -m tradeapp data sync      # pull history from MT5 into data/history.db (the loop also does this)
 python -m tradeapp data info      # what is stored, and where the gaps are
 python -m tradeapp backtest       # replay stored history through the live decision path
 python -m tradeapp backtest --walk-forward
+python -m tradeapp backtest --param trail_atr_mult=2.5   # measure an exit variant
 python -m tradeapp calendar import --file week.json   # then: calendar show
 python -m tradeapp run --fake --ai                    # the loop with the analyst enabled
 python -m tradeapp report postmortem --day 2026-09-02 # what happened, classified
