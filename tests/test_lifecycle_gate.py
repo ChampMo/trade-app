@@ -41,8 +41,9 @@ def test_below_forward_names_the_stages_that_have_proved_nothing_yet():
 
 
 class Settings:
-    def __init__(self, live_enabled: bool):
+    def __init__(self, live_enabled: bool, explicit: bool = False):
         self.live_enabled = live_enabled
+        self._explicit_strategy = explicit
 
 
 def register(journal: Journal, wanted, *, live: bool, fake: bool = False):
@@ -95,3 +96,20 @@ def test_an_empty_result_is_loud_rather_than_a_quiet_idle_loop(journal: Journal)
 
     assert allowed == []
     assert any("no strategy is allowed to trade here" in e.message for e in journal.tail_events(10))
+
+
+def test_a_research_candidate_does_not_join_the_account_uninvited(journal: Journal):
+    """Adding a strategy file must not add a trader to the demo account on the next restart (D31)."""
+    allowed, runtime = register(journal, ["ema_cross", "zone_mtf", "orb_session"], live=False)
+
+    assert allowed == ["ema_cross"]
+    assert any("research candidate" in e.message for e in journal.tail_events(20))
+
+
+def test_naming_the_candidate_is_the_invitation(journal: Journal):
+    from tradeapp.__main__ import _register_allowed
+
+    runtime = StrategyRuntime(journal)
+    allowed = _register_allowed(runtime, ["zone_mtf"], Settings(False, explicit=True), journal, fake=False)
+
+    assert allowed == ["zone_mtf"]

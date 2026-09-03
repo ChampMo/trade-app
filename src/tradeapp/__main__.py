@@ -667,11 +667,21 @@ def _register_allowed(runtime, wanted, settings, journal, *, fake: bool) -> list
     never trades anywhere, and anything below `forward` on a demo account is allowed but says so.
     """
     from tradeapp.lifecycle import Lifecycle, LifecycleState, below_forward, may_trade
-    from tradeapp.strategies import create
+    from tradeapp.strategies import create, discover
 
     states = Lifecycle(journal).all_states()
     allowed: list[str] = []
+    named = bool(getattr(settings, "_explicit_strategy", False))
     for sid in wanted:
+        cls = discover().get(sid)
+        if cls is not None and not getattr(cls, "auto_trade", True) and not named:
+            journal.event(
+                "INFO",
+                "lifecycle",
+                f"{sid} is a research candidate and was not registered; name it with --strategy to run it",
+                {"strategy": sid},
+            )
+            continue
         try:
             state = LifecycleState(states.get(sid, LifecycleState.RESEARCH.value))
         except ValueError:
@@ -722,6 +732,7 @@ def _build_core(settings, args, journal):
 
     runtime = StrategyRuntime(journal)
     wanted = [args.strategy] if args.strategy else sorted(discover())
+    settings._explicit_strategy = bool(args.strategy)
     ids = _register_allowed(runtime, wanted, settings, journal, fake=args.fake)
 
     news = _news_blocker(getattr(args, "calendar_db", "data/calendar.db"), quiet=False)
