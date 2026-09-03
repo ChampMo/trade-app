@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { profitableShare, windowsLabel } from "../lib/walkforward";
 import { Card, Empty, Pill, Stat } from "../components";
 import { EquityCurve, TradeChart } from "../charts";
 import { holdHours, tradePoints } from "../lib/series";
@@ -448,6 +449,10 @@ function WalkForwardCard({ wf }) {
         Each row fits on 180 days and then trades the next 60 it has never seen. In-sample results are the
         strategy describing its own past; only the out-of-sample column is evidence.
       </p>
+      <p className="text-xs">
+        Profitable out of sample: <span className="font-mono">{windowsLabel(wf)}</span>. The forward gate counts
+        these as well as the efficiency ratio, because one lucky window can carry the ratio on its own.
+      </p>
       <div className="max-h-64 overflow-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-surface">
@@ -495,6 +500,7 @@ const COMPARE_ROWS = [
   ["costs", (r) => r.stats?.costs, (v) => money(v), "lower"],
   ["avg hold", (r) => r.stats?.avg_hold_hours, (v) => `${(v ?? 0).toFixed(1)}h`, "neither"],
   ["walk-forward efficiency", (r) => r.walk_forward?.efficiency, (v) => (v == null ? "—" : v.toFixed(3)), "higher"],
+  ["profitable windows", (r) => profitableShare(r.walk_forward), (v) => (v == null ? "—" : `${Math.round(v * 100)}%`), "higher"],
 ];
 
 function CompareCard({ runs, compare, onChange }) {

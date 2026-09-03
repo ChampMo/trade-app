@@ -48,6 +48,7 @@ class GateLimits:
     min_backtest_trades: int = 30
     min_backtest_profit_factor: float = 1.0  # it must at least have made money on its own data
     min_walk_forward_efficiency: float = 0.5
+    min_walk_forward_profitable_share: float = 0.6  # D32: most of the windows, not one lucky one
     max_monte_carlo_p95_drawdown_pct: float = 15.0  # half of the 30% account limit
     min_forward_days: int = 90
     min_forward_trades: int = 200
@@ -67,6 +68,8 @@ class Evidence:
     backtest_stopped_early: bool = False
     backtest_profit_factor: float | None = None
     walk_forward_efficiency: float | None = None
+    walk_forward_windows: int | None = None
+    walk_forward_profitable_windows: int | None = None
     monte_carlo_p95_drawdown_pct: float | None = None
     forward_days: int | None = None
     forward_trades: int | None = None
@@ -128,6 +131,19 @@ def _at_most(value: float | int | None, maximum: float | int) -> bool:
     return value is not None and value <= maximum
 
 
+def _windows_actual(evidence: Evidence) -> str | None:
+    n, k = evidence.walk_forward_windows, evidence.walk_forward_profitable_windows
+    if n is None or k is None:
+        return None
+    return f"{k}/{n} ({k / n:.0%})" if n else "0 windows"
+
+
+def _windows_share_at_least(evidence: Evidence, minimum: float) -> bool:
+    """D32. Zero windows is not evidence, so it fails rather than dividing by nothing."""
+    n, k = evidence.walk_forward_windows, evidence.walk_forward_profitable_windows
+    return bool(n) and k is not None and k / n >= minimum
+
+
 def evaluate(current: LifecycleState, evidence: Evidence, limits: GateLimits | None = None) -> GateResult:
     """Which conditions stand between this strategy and the next state."""
     lim = limits or GateLimits()
@@ -170,6 +186,15 @@ def evaluate(current: LifecycleState, evidence: Evidence, limits: GateLimits | N
                 f">= {lim.min_walk_forward_efficiency}",
                 evidence.walk_forward_efficiency,
                 _at_least(evidence.walk_forward_efficiency, lim.min_walk_forward_efficiency),
+            ),
+            # The ratio above can exceed 1 on one lucky window when the in-sample total is
+            # small (GBPUSD, 2026-09-03: efficiency 2.26 with 4 of 9 windows profitable). This
+            # gate asks how often the edge showed up, and 60% is chosen because 50% is a coin.
+            _gate(
+                "profitable walk-forward windows",
+                f">= {lim.min_walk_forward_profitable_share:.0%} of windows",
+                _windows_actual(evidence),
+                _windows_share_at_least(evidence, lim.min_walk_forward_profitable_share),
             ),
             _gate(
                 "Monte Carlo p95 drawdown",
@@ -327,6 +352,8 @@ def evidence_from_backtest(result, monte_carlo=None, walk_forward=None, costs_mo
         backtest_profit_factor=result.stats.profit_factor,
         monte_carlo_p95_drawdown_pct=monte_carlo.drawdown_p95 if monte_carlo else None,
         walk_forward_efficiency=walk_forward.efficiency if walk_forward else None,
+        walk_forward_windows=len(walk_forward.windows) if walk_forward else None,
+        walk_forward_profitable_windows=walk_forward.profitable_windows if walk_forward else None,
     )
 
 

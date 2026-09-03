@@ -67,6 +67,7 @@ def save_run(
         wf = {
             "windows": len(walk_forward.windows),
             "profitable_windows": walk_forward.profitable_windows,
+            "profitable_share": walk_forward.profitable_share,
             "efficiency": walk_forward.efficiency,
             "summary": walk_forward.summary(),
             # The windows themselves, because "efficiency 0.5" is a number to argue with and a

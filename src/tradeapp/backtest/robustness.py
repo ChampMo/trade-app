@@ -58,13 +58,25 @@ class WalkForwardResult:
     def profitable_windows(self) -> int:
         return sum(1 for w in self.windows if w.test_return_pct > 0)
 
+    @property
+    def profitable_share(self) -> float | None:
+        """Profitable out-of-sample windows over all windows (D32).
+
+        The efficiency ratio divides by the in-sample total, so when that total is small one
+        lucky window pushes it past 1 while most windows lost. This is the number that says how
+        often the edge showed up, not how hard.
+        """
+        if not self.windows:
+            return None
+        return round(self.profitable_windows / len(self.windows), 3)
+
     def summary(self) -> str:
         if not self.windows:
             return "no walk-forward windows (not enough data)"
         eff = self.efficiency
         return (
-            f"{len(self.windows)} windows, {self.profitable_windows} profitable out of sample, "
-            f"efficiency {eff if eff is not None else 'n/a'}"
+            f"{len(self.windows)} windows, {self.profitable_windows} profitable out of sample "
+            f"({self.profitable_share:.0%}), efficiency {eff if eff is not None else 'n/a'}"
         )
 
 
@@ -194,6 +206,9 @@ def gate_report(result: BacktestResult, mc: MonteCarloResult, wf: WalkForwardRes
         "max_drawdown_pct": result.stats.max_drawdown_pct,
         "monte_carlo_p95_drawdown": mc.drawdown_p95,
         "walk_forward_efficiency": wf.efficiency if wf else None,
+        "walk_forward_windows": len(wf.windows) if wf else None,
+        "walk_forward_profitable_windows": wf.profitable_windows if wf else None,
+        "walk_forward_profitable_share": wf.profitable_share if wf else None,
         "stopped_early": result.stopped_early,
         "cost_share_of_gross_pct": result.stats.cost_share_of_gross,
     }

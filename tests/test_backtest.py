@@ -338,6 +338,21 @@ def test_gate_report_collects_what_the_gates_read():
     mc = monte_carlo(result.trades, result.start_balance, runs=50)
     report = gate_report(result, mc)
     assert set(report) >= {"trades", "max_drawdown_pct", "monte_carlo_p95_drawdown", "stopped_early"}
+    assert report["walk_forward_profitable_share"] is None  # no walk-forward ran, so nothing to count
+
+
+def test_walk_forward_counts_how_often_the_edge_showed_up_not_how_hard():
+    """One lucky window out of four gives an efficiency of 5 and a share of 25% (D32)."""
+    from types import SimpleNamespace
+
+    from tradeapp.backtest.robustness import WalkForwardResult
+
+    wf = WalkForwardResult(windows=[SimpleNamespace(train_return_pct=0.1, test_return_pct=t) for t in (5.0, -1, -1, -1)])
+    assert wf.efficiency == 5.0
+    assert wf.profitable_windows == 1
+    assert wf.profitable_share == 0.25
+    assert "1 profitable out of sample (25%)" in wf.summary()
+    assert WalkForwardResult().profitable_share is None
 
 
 def test_a_backtest_can_ask_what_a_strategy_would_do_on_another_pair():

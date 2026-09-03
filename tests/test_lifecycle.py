@@ -23,7 +23,12 @@ def full_backtest_evidence() -> Evidence:
 
 
 def full_forward_evidence() -> Evidence:
-    return Evidence(walk_forward_efficiency=0.7, monte_carlo_p95_drawdown_pct=9.0)
+    return Evidence(
+        walk_forward_efficiency=0.7,
+        walk_forward_windows=5,
+        walk_forward_profitable_windows=4,
+        monte_carlo_p95_drawdown_pct=9.0,
+    )
 
 
 def full_live_small_evidence() -> Evidence:
@@ -107,6 +112,57 @@ def test_curve_fitting_is_caught_by_walk_forward():
         LifecycleState.BACKTESTED, Evidence(walk_forward_efficiency=0.1, monte_carlo_p95_drawdown_pct=5.0)
     )
     assert "walk-forward efficiency" in [g.name for g in result.failures]
+
+
+def test_a_coin_flip_walk_forward_is_refused_even_with_a_high_efficiency():
+    """GBPUSD, 2026-09-03: efficiency 2.26 on 4 profitable windows out of 9. The ratio divided a
+    lucky window by a tiny in-sample total; the count says the edge showed up less than half the
+    time. D32 makes the count a gate of its own."""
+    result = evaluate(
+        LifecycleState.BACKTESTED,
+        Evidence(
+            walk_forward_efficiency=2.264,
+            walk_forward_windows=9,
+            walk_forward_profitable_windows=4,
+            monte_carlo_p95_drawdown_pct=4.4,
+        ),
+    )
+    assert not result.passed
+    assert [g.name for g in result.failures] == ["profitable walk-forward windows"]
+    assert "4/9 (44%)" in str(result.failures[0])
+
+
+def test_the_window_gate_passes_at_exactly_sixty_percent():
+    ev = Evidence(
+        walk_forward_efficiency=0.7,
+        walk_forward_windows=5,
+        walk_forward_profitable_windows=3,
+        monte_carlo_p95_drawdown_pct=5.0,
+    )
+    assert evaluate(LifecycleState.BACKTESTED, ev).passed
+
+
+def test_zero_walk_forward_windows_is_not_evidence():
+    ev = Evidence(
+        walk_forward_efficiency=0.7,
+        walk_forward_windows=0,
+        walk_forward_profitable_windows=0,
+        monte_carlo_p95_drawdown_pct=5.0,
+    )
+    result = evaluate(LifecycleState.BACKTESTED, ev)
+    assert "profitable walk-forward windows" in [g.name for g in result.failures]
+
+
+def test_evidence_carries_the_window_count_from_a_walk_forward():
+    """Nobody types these numbers by hand, so the bridge must carry both halves of D32."""
+    from types import SimpleNamespace
+
+    windows = [SimpleNamespace(train_return_pct=0.1, test_return_pct=t) for t in (5.0, -1.0, -1.0, -1.0)]
+    wf = SimpleNamespace(windows=windows, profitable_windows=1, efficiency=5.0)
+    result = SimpleNamespace(stats=SimpleNamespace(trades=40, profit_factor=1.2), stopped_early=False)
+    ev = evidence_from_backtest(result, walk_forward=wf)
+    assert (ev.walk_forward_windows, ev.walk_forward_profitable_windows, ev.walk_forward_efficiency) == (4, 1, 5.0)
+    assert not evaluate(LifecycleState.BACKTESTED, Evidence(**{**ev.__dict__, "monte_carlo_p95_drawdown_pct": 3.0})).passed
 
 
 def test_a_missing_walk_forward_counts_as_not_proven():
