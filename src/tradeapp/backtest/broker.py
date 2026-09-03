@@ -35,6 +35,7 @@ from tradeapp.contracts import (
     SymbolInfo,
     Tick,
 )
+from tradeapp.indicators import aggregate_bars
 
 EURUSD = SymbolInfo(
     symbol="EURUSD",
@@ -168,7 +169,15 @@ class BacktestBroker:
         )
 
     def bars(self, symbol: str, timeframe: TF, count: int = 300, include_forming: bool = False) -> list[Bar]:
-        return self.bars_all[max(0, self.index + 1 - count) : self.index + 1]
+        window = self.bars_all[max(0, self.index + 1 - count) : self.index + 1]
+        if timeframe == self.timeframe:
+            return window
+        # A bigger timeframe is built from the small bars seen so far, and only the buckets that
+        # have fully closed by the current bar. That is the same rule the live loop applies when
+        # it asks MT5 for H1 bars from inside an M15 decision (D30); here it is true by construction.
+        span = max(count * (timeframe.minutes // self.timeframe.minutes), 1)
+        source = self.bars_all[max(0, self.index + 1 - span) : self.index + 1]
+        return aggregate_bars(source, timeframe.minutes, from_minutes=self.timeframe.minutes)[-count:]
 
     def positions(self, symbol: str | None = None, magic: int | None = None) -> list[Position]:
         out = list(self._positions.values())

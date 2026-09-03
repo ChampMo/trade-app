@@ -115,3 +115,53 @@ def _rsi_value(avg_gain: float, avg_loss: float) -> float:
 
 def closes(bars: Sequence[Bar]) -> list[float]:
     return [b.close for b in bars]
+
+
+# --- timeframes ------------------------------------------------------------------------------
+
+
+def aggregate_bars(bars: Sequence[Bar], to_minutes: int, *, from_minutes: int) -> list[Bar]:
+    """Roll smaller bars up into bigger ones, returning only the ones that have fully closed.
+
+    The one rule that matters is at the end: a bucket is included only if its close time is at or
+    before the close of the last small bar given. A strategy on M15 asking for H1 must never see
+    the H1 bar that the current M15 bar is still part of — that is the look-ahead bias that makes
+    most multi-timeframe backtests in the world look better than they are (D30).
+
+    Buckets are aligned to the epoch, which is how MT5 aligns them too (an H4 bar starts on the
+    hour divisible by four in server time; server time is handled upstream, so here it is UTC).
+    """
+    if to_minutes <= 0 or from_minutes <= 0 or to_minutes % from_minutes != 0:
+        raise ValueError(f"cannot build {to_minutes}-minute bars from {from_minutes}-minute bars")
+    if not bars:
+        return []
+    width = to_minutes * 60
+    out: list[Bar] = []
+    bucket_start = None
+    o = hi = lo = c = None
+    v = 0
+    for bar in bars:
+        start = int(bar.time_utc.timestamp()) // width * width
+        if start != bucket_start:
+            if bucket_start is not None:
+                out.append(_bucket(bucket_start, o, hi, lo, c, v, bars[0]))
+            bucket_start, o, hi, lo, c, v = start, bar.open, bar.high, bar.low, bar.close, 0
+        else:
+            hi, lo, c = max(hi, bar.high), min(lo, bar.low), bar.close
+        v += int(getattr(bar, "volume", 0) or 0)
+    out.append(_bucket(bucket_start, o, hi, lo, c, v, bars[0]))
+
+    last_close = bars[-1].time_utc.timestamp() + from_minutes * 60
+    return [b for b in out if b.time_utc.timestamp() + width <= last_close]
+
+
+def _bucket(start: int, o: float, hi: float, lo: float, c: float, v: int, like: Bar) -> Bar:
+    from datetime import datetime
+
+    when = datetime.fromtimestamp(start, tz=like.time_utc.tzinfo)
+    fields = {"time_utc": when, "open": o, "high": hi, "low": lo, "close": c}
+    if hasattr(like, "volume"):
+        fields["volume"] = v
+    if hasattr(like, "spread"):
+        fields["spread"] = getattr(like, "spread", 0)
+    return Bar(**fields)

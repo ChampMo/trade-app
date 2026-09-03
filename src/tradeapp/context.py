@@ -11,8 +11,9 @@ for EMA(20) on the same bars pay for it once.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from tradeapp import indicators
 from tradeapp.contracts import TF, Bar, SymbolInfo, Tick
@@ -28,6 +29,9 @@ class Context:
     tick: Tick | None = None
     symbol_info: SymbolInfo | None = None
     ai: AIContext = field(default_factory=AIContext.neutral)
+    # How to get bars of a bigger timeframe. Set by whoever built this Context (the loop or the
+    # backtest); a strategy only ever calls `higher()`, which applies the alignment rule below.
+    higher_bars: Callable[[TF, int], list[Bar]] | None = field(default=None, repr=False, compare=False)
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     # --- bars ---------------------------------------------------------------------
@@ -51,6 +55,47 @@ class Context:
 
     def has_history(self, bars_needed: int) -> bool:
         return len(self.bars) >= bars_needed
+
+    # --- other timeframes ------------------------------------------------------------
+
+    @property
+    def closes_at(self) -> datetime:
+        """When the bar that just closed actually closed: its open time plus the timeframe."""
+        return self.bar.time_utc + timedelta(minutes=self.timeframe.minutes)
+
+    def higher(self, timeframe: TF, count: int = 200) -> Context | None:
+        """The same market on a bigger timeframe, as of *now* — never a bar that has not closed.
+
+        A strategy on M15 deciding at 13:15 may look at the H1 bar that closed at 13:00 and not
+        at the one that will close at 14:00, however much of it already exists. The filter is
+        applied here, once, for the loop and the backtest alike (rule 04, D30). The result is a
+        full Context, so the usual indicators work on it.
+        """
+        if timeframe.minutes <= self.timeframe.minutes:
+            raise ValueError(f"{timeframe.value} is not a higher timeframe than {self.timeframe.value}")
+        key = ("higher", timeframe.value, count)
+        if key in self._cache:
+            return self._cache[key]
+        if self.higher_bars is None or not self.bars:
+            return None
+        cutoff = self.closes_at.timestamp()
+        width = timeframe.minutes * 60
+        bars = [b for b in self.higher_bars(timeframe, count) if b.time_utc.timestamp() + width <= cutoff]
+        ctx = (
+            Context(
+                symbol=self.symbol,
+                timeframe=timeframe,
+                bars=bars,
+                now_utc=self.now_utc,
+                tick=self.tick,
+                symbol_info=self.symbol_info,
+                ai=self.ai,
+            )
+            if bars
+            else None
+        )
+        self._cache[key] = ctx
+        return ctx
 
     # --- indicators ---------------------------------------------------------------
 
@@ -123,4 +168,5 @@ def build_context(
         tick=broker.tick(symbol),
         symbol_info=broker.symbol_info(symbol),
         ai=ai or AIContext.neutral(),
+        higher_bars=lambda tf, n: broker.bars(symbol, tf, n),
     )

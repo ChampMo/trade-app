@@ -632,6 +632,9 @@ class Core:
                 tick=tick,
                 symbol_info=info,
                 ai=self.analyst.view if self.analyst is not None else AIContext.neutral(),
+                # A strategy asking for a bigger timeframe gets it from the same broker; the
+                # Context drops any bar that has not closed yet (D30).
+                higher_bars=lambda tf, n, _s=market.symbol: self.broker.bars(_s, tf, n),
             )
         except Exception as e:  # noqa: BLE001
             self.journal.event(
