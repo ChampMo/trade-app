@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from tradeapp.ai.client import BudgetExceeded, DeepSeekClient
 from tradeapp.ai.schemas import AnalystView
+from tradeapp.ai.scout import briefing_lines
 from tradeapp.calendar import CalendarStore, Impact
 from tradeapp.context import Context
 from tradeapp.journal import Journal
@@ -53,7 +54,12 @@ class AnalystResult:
     detail: str
 
 
-def build_prompt(ctx: Context, calendar: CalendarStore | None, now: datetime) -> str:
+def build_prompt(
+    ctx: Context,
+    calendar: CalendarStore | None,
+    now: datetime,
+    scout_lines: list[str] | None = None,
+) -> str:
     """Market context only. No balance, no positions, no tickets."""
     lines = [
         f"Symbol: {ctx.symbol}",
@@ -77,6 +83,11 @@ def build_prompt(ctx: Context, calendar: CalendarStore | None, now: datetime) ->
             lines += [f"  {e.time_utc:%H:%M} UTC  {e.currency}  {e.impact.value}  {e.title}" for e in events[:12]]
         else:
             lines.append("No medium or high impact releases scheduled in the next 24 hours.")
+    if scout_lines:
+        # Labelled for what it is. The calendar above is a fact; this is another model's opinion,
+        # and saying so is the difference between context and a second source of truth (D24).
+        lines.append("Scout briefing (unverified model notes, no times; the calendar above is authoritative):")
+        lines += scout_lines
     return "\n".join(lines)
 
 
@@ -87,11 +98,13 @@ class Analyst:
         journal: Journal,
         *,
         calendar: CalendarStore | None = None,
+        use_scout: bool = True,
         now=lambda: datetime.now(UTC),
     ) -> None:
         self.client = client
         self.journal = journal
         self.calendar = calendar
+        self.use_scout = use_scout
         self._now = now
         self.current = AIContext.neutral()
 
@@ -107,7 +120,8 @@ class Analyst:
             reason = "no API key" if not self.client.api_key else "daily budget spent"
             return AnalystResult(self.view, False, f"kept the previous view: {reason}")
 
-        prompt = build_prompt(ctx, self.calendar, now)
+        scout_lines = briefing_lines(self.journal, now) if self.use_scout else []
+        prompt = build_prompt(ctx, self.calendar, now, scout_lines)
         try:
             view: AnalystView = self.client.ask_json("analyst", SYSTEM, prompt, AnalystView)
         except BudgetExceeded as e:

@@ -461,6 +461,68 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scout(args: argparse.Namespace) -> int:
+    """Ask the scout what is on the radar. Writes a briefing the analyst reads; blocks nothing."""
+    from tradeapp.ai.scout import Scout, load_briefing
+
+    settings = load_settings()
+    journal = Journal(settings.journal_path)
+    client = _client(settings, journal)
+    if client is None:
+        print("no DEEPSEEK_API_KEY; nothing to ask")
+        return 1
+
+    briefing, detail = Scout(client, journal, symbol=args.symbol).refresh(days=args.days)
+    print(f"scout     {detail}")
+    briefing = briefing or load_briefing(journal)
+    if briefing is None or not briefing.events:
+        print("          nothing on the radar")
+        return 0
+    print(f"written   {briefing.written_utc:%Y-%m-%d %H:%M} UTC (the analyst ignores it after 36h)")
+    for line in briefing.lines(limit=12):
+        print(line)
+    print("\nThis never reaches the calendar and can block nothing on its own (D24).")
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """Have the reviewer comment on a day. It explains; it proposes nothing (D11)."""
+    from tradeapp import reports
+    from tradeapp.ai.reviewer import Reviewer, render
+
+    settings = load_settings()
+    journal = Journal(settings.simulated_journal_path if args.fake else settings.journal_path)
+    day_report = reports.build(journal, args.day)
+    client = _client(settings, journal)
+    if client is None:
+        print("no DEEPSEEK_API_KEY; nothing to ask")
+        return 1
+
+    review, detail = Reviewer(client, journal).review(day_report)
+    if review is None:
+        print(f"reviewer  not run: {detail}")
+        return 1
+
+    section = render(review)
+    if args.write:
+        path = reports.write(day_report, args.dir)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + section)
+        print(f"appended to {path}")
+    else:
+        print(section)
+    return 0
+
+
+def _client(settings, journal):
+    from tradeapp.ai.client import DeepSeekClient
+
+    key = settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None
+    if not key:
+        return None
+    return DeepSeekClient(key, journal, daily_budget_usd=settings.deepseek_daily_budget_usd)
+
+
 def cmd_notify(args: argparse.Namespace) -> int:
     """Send one message so you can prove the channel works before you need it."""
     settings = load_settings()
@@ -928,6 +990,18 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--strategy", default=None, help="use this strategy's most recent stored run (drift)")
     rp.add_argument("--point", type=float, default=0.00001, help="symbol point, for reporting in points")
     rp.set_defaults(fn=cmd_report)
+
+    sc = sub.add_parser("scout", help="ask the scout what is on the radar this week (writes a briefing only)")
+    sc.add_argument("--symbol", default="EURUSD")
+    sc.add_argument("--days", type=int, default=7)
+    sc.set_defaults(fn=cmd_scout)
+
+    rv = sub.add_parser("review", help="have the reviewer comment on a day (an opinion, never a proposal)")
+    rv.add_argument("--day", default=None, help="YYYY-MM-DD, defaults to today")
+    rv.add_argument("--write", action="store_true", help="append to the day's post-mortem in reports/")
+    rv.add_argument("--dir", default="reports")
+    rv.add_argument("--fake", action="store_true", help="read the simulated-runs journal")
+    rv.set_defaults(fn=cmd_review)
 
     nt = sub.add_parser("notify", help="prove the Telegram channel works before you need it")
     nt.add_argument("action", choices=["test", "status", "poll"])

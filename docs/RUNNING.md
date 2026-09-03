@@ -72,6 +72,25 @@ curl http://127.0.0.1:8001/status
 
 Telegram heartbeat จะมาใน P4-02 ซึ่งเป็นวิธีที่ดีกว่าการมานั่งเปิด curl เอง
 
+## งานประจำวัน (post-mortem, scout, reviewer)
+
+สามอย่างนี้ตั้งใน Task Scheduler แบบเดียวกับ start-core.cmd แต่เป็น trigger แบบเวลา ไม่ใช่ at-logon
+
+| เวลา (ไทย) | คำสั่ง | ทำอะไร |
+|---|---|---|
+| 06:00 | `python -m tradeapp scout --symbol EURUSD` | ถามว่าสัปดาห์นี้มีอะไรน่าสนใจ เก็บเป็น briefing อายุ 36 ชม. ให้ analyst อ่าน |
+| 23:30 | `python -m tradeapp report postmortem --write` | สรุปวัน จัดประเภทการขาดทุนด้วยโค้ด ไม่ใช่โมเดล |
+| 23:35 | `python -m tradeapp review --write` | ให้ reviewer เขียนความเห็นต่อท้าย post-mortem ของวันนั้น |
+
+ทั้ง scout และ reviewer **ไม่มีอำนาจอะไรเลย** scout เขียนลงปฏิทินไม่ได้ (D24) reviewer เสนอแก้พารามิเตอร์ไม่ได้ (D11)
+ถ้าไม่มี `DEEPSEEK_API_KEY` หรืองบรายวันหมด ทั้งคู่จะบอกตรง ๆ แล้วจบ ไม่มีอะไรพัง
+
+ถ้าจะเทียบผลจริงกับ backtest ให้ตั้งเพิ่มสัปดาห์ละครั้ง
+
+```bash
+python -m tradeapp report drift --strategy ema_cross --days 7 --write
+```
+
 ## ถ้าไฟดับหรือเครื่องรีสตาร์ท
 
 โพซิชันที่เปิดอยู่ยังปลอดภัยเพราะ **SL อยู่ที่โบรก** ไม่ได้อยู่ในตัวแปรใน Python (กฎข้อ 3) พอ core กลับมามันจะ reconcile กับโบรกก่อนทำอย่างอื่น และ peak equity กับ day-start equity อยู่ในตาราง `state` ของ journal จึงไม่ถูกล้างตอนรีสตาร์ท (D21)
