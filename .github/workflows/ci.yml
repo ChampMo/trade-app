@@ -41,11 +41,11 @@ jobs:
       - name: install
         run: |
           set +e
-          npm ci --ignore-scripts > install.log 2>&1
+          { echo "PWD=$(pwd)"; ls -la; echo "--- npm ci ---"; npm ci --ignore-scripts; } > install.log 2>&1
           code=$?
           cat install.log
           if [ $code -ne 0 ]; then
-            echo "::error::$(tr -s "[:space:]" " " < install.log | tail -c 900)"
+            echo "::error::$(tr -s "[:space:]" " " < install.log | head -c 900)"
           fi
           exit $code
       - run: npm test
