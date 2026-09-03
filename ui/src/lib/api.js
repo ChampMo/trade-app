@@ -55,6 +55,12 @@ export const api = {
     request(`/backtest/runs?limit=${limit}${strategy ? `&strategy=${encodeURIComponent(strategy)}` : ""}`),
   run: (id) => request(`/backtest/runs/${id}`),
   drift: (id, days = 30) => request(`/backtest/runs/${id}/drift?days=${days}`),
+  backtestOptions: () => request("/backtest/options"),
+  bars: ({ symbol, timeframe, start, end, limit = 400 }) =>
+    request(
+      `/bars?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}` +
+        `&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&limit=${limit}`,
+    ),
   jobs: () => request("/backtest/jobs"),
   job: (id) => request(`/backtest/jobs/${id}`),
   startBacktest: (body) => request("/backtest", { method: "POST", body: JSON.stringify(body) }),

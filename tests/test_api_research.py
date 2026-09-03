@@ -7,6 +7,8 @@ writable**. A limit is a decision recorded in DECISIONS.md, and an endpoint that
 would turn a deliberate act into a slider you nudge after a bad afternoon.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -221,3 +223,94 @@ def test_every_timestamp_says_it_is_utc(client, journal: Journal):
     # And the reading itself is untouched: the offset is added, the clock is not shifted.
     stored = journal.tail_events(1)[-1].ts_utc
     assert datetime.fromisoformat(stamps[0]) == stored.replace(tzinfo=UTC)
+
+
+# --- what the form is allowed to offer -------------------------------------------------------
+
+
+def test_the_form_is_built_from_what_can_actually_be_replayed(client, tmp_path):
+    """A symbol with no stored bars is not a typo to correct after a failed run (D25)."""
+    from tradeapp.contracts import TF, Bar
+    from tradeapp.data import BarStore
+
+    store = BarStore(tmp_path / "history.db")
+    store.upsert(
+        "EURUSD",
+        TF.H4,
+        [
+            Bar(time_utc=datetime(2026, 1, 1, h, tzinfo=UTC), open=1.1, high=1.2, low=1.0, close=1.15)
+            for h in range(0, 20, 4)
+        ],
+    )
+    client.runner.history_db = str(tmp_path / "history.db")
+
+    body = client.get("/backtest/options").json()
+
+    assert "ema_cross" in body["strategies"]
+    assert body["data"] == [
+        {
+            "symbol": "EURUSD",
+            "timeframe": "H4",
+            "bars": 5,
+            "from": "2026-01-01T00:00:00+00:00",
+            "to": "2026-01-01T16:00:00+00:00",
+        }
+    ]
+
+
+def test_an_empty_history_offers_no_data_rather_than_a_guess(client, tmp_path):
+    client.runner.history_db = str(tmp_path / "empty.db")
+    body = client.get("/backtest/options").json()
+    assert body["data"] == []
+    assert body["strategies"]  # the strategies are still there; the bars are not
+
+
+# --- bars for the chart ------------------------------------------------------------------------
+
+
+def test_bars_come_back_as_a_window_not_the_whole_store(client, tmp_path):
+    from tradeapp.contracts import TF, Bar
+    from tradeapp.data import BarStore
+
+    store = BarStore(tmp_path / "history.db")
+    store.upsert(
+        "EURUSD",
+        TF.H4,
+        [
+            Bar(
+                time_utc=datetime(2026, 1, 1, tzinfo=UTC) + timedelta(hours=4 * i),
+                open=1.1,
+                high=1.2,
+                low=1.0,
+                close=1.15,
+            )
+            for i in range(50)
+        ],
+    )
+    client.runner.history_db = str(tmp_path / "history.db")
+
+    body = client.get("/bars?symbol=EURUSD&timeframe=H4&limit=5").json()
+    assert len(body["bars"]) == 5
+    assert set(body["bars"][0]) == {"t", "o", "h", "l", "c"}
+    assert body["bars"][0]["t"].endswith("+00:00")
+
+    windowed = client.get("/bars?symbol=EURUSD&timeframe=H4&start=2026-01-02T00:00:00Z&end=2026-01-02T12:00:00Z").json()
+    assert [b["t"][:16] for b in windowed["bars"]] == [
+        "2026-01-02T00:00",
+        "2026-01-02T04:00",
+        "2026-01-02T08:00",
+        "2026-01-02T12:00",
+    ]
+
+
+def test_an_unreadable_time_is_a_400_not_a_stack_trace(client):
+    assert client.get("/bars?symbol=EURUSD&timeframe=H4&start=yesterday").status_code == 400
+
+
+def test_an_unknown_timeframe_is_refused(client):
+    assert client.get("/bars?symbol=EURUSD&timeframe=H7").status_code == 400
+
+
+def test_a_symbol_with_no_bars_is_an_empty_list_not_an_error(client, tmp_path):
+    client.runner.history_db = str(tmp_path / "history.db")
+    assert client.get("/bars?symbol=GBPUSD&timeframe=H4").json()["bars"] == []

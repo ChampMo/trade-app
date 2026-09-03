@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from datetime import UTC
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from tradeapp.contracts import TF
 from tradeapp.journal import Journal
 from tradeapp.lifecycle import Lifecycle
 from tradeapp.research import BacktestRunner, limits_dict, run_dict
@@ -220,6 +221,80 @@ def create_app(
             "diverging": [m.name for m in report.diverging],
             "notes": report.notes,
             "markdown": reports.render_drift(report),
+        }
+
+    @app.get("/backtest/options")
+    def backtest_options() -> dict:
+        """What can actually be replayed: the registered strategies, and the bars that exist.
+
+        The Research form is built from this rather than from free text. A backtest of a symbol
+        with no stored history is not a typo to be corrected after a failed run — it is a choice
+        that should not have been offered.
+        """
+        from tradeapp.data import BarStore
+        from tradeapp.strategies import discover
+
+        store = BarStore(runner.history_db)
+        data = []
+        for symbol, timeframe, bars in store.symbols():
+            try:
+                tf = TF(timeframe)
+            except ValueError:
+                continue
+            first, last = store.range(symbol, tf)
+            data.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": tf.value,
+                    "bars": bars,
+                    "from": first.isoformat() if first else None,
+                    "to": last.isoformat() if last else None,
+                }
+            )
+        return {"strategies": sorted(discover()), "data": data}
+
+    @app.get("/bars")
+    def bars(
+        symbol: str = "EURUSD",
+        timeframe: str = "H4",
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 400,
+    ) -> dict:
+        """Stored bars for charting. Read-only, from the history file the backtests replay.
+
+        A window, never the whole store: 20,000 bars is megabytes of JSON and no chart can show
+        them. The caller asks for the range it wants to draw.
+        """
+        from tradeapp.data import BarStore
+
+        try:
+            tf = TF(timeframe.upper())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"unknown timeframe {timeframe}") from e
+
+        def moment(raw: str | None) -> datetime | None:
+            if not raw:
+                return None
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"cannot read the time {raw!r}") from e
+
+        rows = BarStore(runner.history_db).load(symbol, tf, moment(start), moment(end), min(limit, 2000))
+        return {
+            "symbol": symbol,
+            "timeframe": tf.value,
+            "bars": [
+                {
+                    "t": b.time_utc.isoformat(),
+                    "o": b.open,
+                    "h": b.high,
+                    "l": b.low,
+                    "c": b.close,
+                }
+                for b in rows
+            ],
         }
 
     @app.get("/backtest/jobs")
