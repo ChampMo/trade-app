@@ -45,8 +45,7 @@ jobs:
           code=$?
           cat install.log
           if [ $code -ne 0 ]; then
-            echo "::error::$(tr '
-' '  ' < install.log | tail -c 900)"
+            echo "::error::$(tr -s "[:space:]" " " < install.log | tail -c 900)"
           fi
           exit $code
       - run: npm test
