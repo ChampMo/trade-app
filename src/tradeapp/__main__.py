@@ -333,11 +333,17 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
         from tradeapp.backtest import walk_forward
 
-        grid = [{"fast": f, "slow": sl} for f in (10, 20, 30) for sl in (50, 100) if f < sl]
-        print(f"\nwalk-forward over {len(grid)} parameter sets, train 180d / test 60d ...")
+        # ema_cross keeps its small fast/slow grid, the one research setting where a grid was
+        # agreed on. Every other strategy is walked forward on exactly the parameters given: the
+        # question is whether *this* configuration holds up out of sample, not which one would have.
+        if args.strategy == "ema_cross" and not params:
+            grid = [{"fast": f, "slow": sl} for f in (10, 20, 30) for sl in (50, 100) if f < sl]
+        else:
+            grid = [dict(params)]
+        print(f"\nwalk-forward over {len(grid)} parameter set(s), train 180d / test 60d ...")
         wf = walk_forward(
             bars,
-            build=lambda prm: [create(args.strategy, **prm)],
+            build=lambda prm: [on_symbol(on_timeframe(create(args.strategy, **prm), tf), args.symbol)],
             param_grid=grid,
             train=timedelta(days=180),
             test=timedelta(days=60),
